@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -150,8 +151,24 @@ func UpdateProxyConfig(c *gin.Context) {
 			Path:        req.Outbound.TransportPath,
 			Headers:     headers,
 			ServiceName: req.Outbound.TransportService,
-		}
 	}
+	}
+	// Validate the outbound against an in-process sing-box build before
+	// persisting. A failed validation prevents the Option update.
+	if req.Enabled {
+		outboundJSON, err := common.Marshal(req.Outbound)
+		if err != nil {
+			common.ApiErrorMsg(c, "failed to marshal outbound config")
+			return
+		}
+		validationDialer, err := service.BuildSingBoxDialer(outboundJSON)
+		if err != nil {
+			common.ApiErrorMsg(c, "invalid sing-box outbound configuration: "+err.Error())
+			return
+		}
+		_ = validationDialer.Close()
+	}
+
 	jsonBytes, err := common.Marshal(req)
 	if err != nil {
 		common.ApiErrorMsg(c, "failed to marshal config")
