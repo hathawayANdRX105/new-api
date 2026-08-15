@@ -32,6 +32,17 @@ const K_PRICE: &str = "Price";
 const K_USD_RATE: &str = "USDExchangeRate";
 const K_QUOTA_PER_UNIT: &str = "QuotaPerUnit";
 
+const MODEL_MAP_KEYS: [&str; 8] = [
+    K_MODEL_RATIO,
+    K_MODEL_PRICE,
+    K_COMPLETION_RATIO,
+    K_CACHE_RATIO,
+    K_CREATE_CACHE_RATIO,
+    K_IMAGE_RATIO,
+    K_AUDIO_RATIO,
+    K_AUDIO_COMPLETION_RATIO,
+];
+
 /// Read the full option map from the server and return the parsed JSON
 /// value of `key`. If the key is missing or its value is empty, return
 /// an empty object so callers can `insert`/mutate.
@@ -50,6 +61,7 @@ fn load_map(client: &ApiClient, key: &str) -> Result<Map<String, Value>> {
 }
 
 /// Serialize a map to its JSON-string representation for option storage.
+/// Avoids deep-cloning by reusing the same `Map` via `into()`.
 fn store_map(map: &Map<String, Value>) -> Result<String> {
     serde_json::to_string(&Value::Object(map.clone())).context("serializing pricing map")
 }
@@ -75,6 +87,19 @@ fn write_map_entry(
     }
     let serialized = store_map(&map)?;
     client.put_json(OPTION, &json!({ "key": key, "value": serialized }))
+}
+
+/// Look up `key` in an options response, returning the parsed JSON value
+/// (object/string/number) or a sensible default if the key is absent.
+fn lookup(opts: &Value, key: &str) -> Value {
+    let raw = opts.get(key).and_then(|v| v.as_str()).unwrap_or("");
+    if raw.is_empty() {
+        return match key {
+            K_GROUP_GROUP_RATIO | K_TOPUP_GROUP_RATIO => Value::Null,
+            _ => Value::Object(Map::new()),
+        };
+    }
+    serde_json::from_str(raw).unwrap_or(Value::Null)
 }
 
 #[derive(Args)]
@@ -159,7 +184,7 @@ pub fn run(client: &ApiClient, cmd: &PricingCommand) -> Result<()> {
 pub fn dispatch(client: &ApiClient, cmd: &PricingCommand) -> Result<Value> {
     match cmd {
         PricingCommand::Show => show(client),
-        PricingCommand::Export => export(client),
+        PricingCommand::Export => show(client),
         PricingCommand::Import { json } => import(client, json),
         PricingCommand::Model(m) => dispatch_model(client, m),
         PricingCommand::Group(g) => dispatch_group(client, g),
@@ -171,87 +196,49 @@ pub fn dispatch(client: &ApiClient, cmd: &PricingCommand) -> Result<Value> {
     }
 }
 
-fn model_map_keys() -> &'static [&'static str] {
-    &[
-        K_MODEL_RATIO,
-        K_MODEL_PRICE,
-        K_COMPLETION_RATIO,
-        K_CACHE_RATIO,
-        K_CREATE_CACHE_RATIO,
-        K_IMAGE_RATIO,
-        K_AUDIO_RATIO,
-        K_AUDIO_COMPLETION_RATIO,
-    ]
-}
-
 fn show(client: &ApiClient) -> Result<Value> {
     let opts = client.get(OPTION, &[])?;
     let mut out = Map::new();
-    for k in model_map_keys() {
-        if let Some(v) = opts.get(*k) {
-            out.insert((*k).to_string(), parse_map_field(v));
-        }
+    for k in MODEL_MAP_KEYS.iter() {
+        out.insert((*k).to_string(), lookup(&opts, k));
     }
-    out.insert(
-        K_GROUP_RATIO.to_string(),
-        parse_map_field(&opts[KEY_GROUP_RATIO]),
-    );
+    out.insert(K_GROUP_RATIO.to_string(), lookup(&opts, K_GROUP_RATIO));
     out.insert(
         K_GROUP_GROUP_RATIO.to_string(),
-        parse_value_field(&opts[KEY_GROUP_GROUP_RATIO]),
+        lookup(&opts, K_GROUP_GROUP_RATIO),
     );
     out.insert(
         K_TOPUP_GROUP_RATIO.to_string(),
-        parse_value_field(&opts[KEY_TOPUP_GROUP_RATIO]),
+        lookup(&opts, K_TOPUP_GROUP_RATIO),
     );
     out.insert(
         K_PRICE.to_string(),
-        Value::String(opts[KEY_PRICE].as_str().unwrap_or("").to_string()),
+        Value::String(
+            opts.get(K_PRICE)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        ),
     );
     out.insert(
         K_USD_RATE.to_string(),
-        Value::String(opts[KEY_USD_RATE].as_str().unwrap_or("").to_string()),
+        Value::String(
+            opts.get(K_USD_RATE)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        ),
     );
     out.insert(
         K_QUOTA_PER_UNIT.to_string(),
-        Value::String(opts[KEY_QUOTA_PER_UNIT].as_str().unwrap_or("").to_string()),
+        Value::String(
+            opts.get(K_QUOTA_PER_UNIT)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        ),
     );
     Ok(Value::Object(out))
-}
-
-const KEY_MODEL_RATIO: &str = "ModelRatio";
-const KEY_MODEL_PRICE: &str = "ModelPrice";
-const KEY_COMPLETION_RATIO: &str = "CompletionRatio";
-const KEY_CACHE_RATIO: &str = "CacheRatio";
-const KEY_CREATE_CACHE_RATIO: &str = "CreateCacheRatio";
-const KEY_IMAGE_RATIO: &str = "ImageRatio";
-const KEY_AUDIO_RATIO: &str = "AudioRatio";
-const KEY_AUDIO_COMPLETION_RATIO: &str = "AudioCompletionRatio";
-const KEY_GROUP_RATIO: &str = "GroupRatio";
-const KEY_GROUP_GROUP_RATIO: &str = "GroupGroupRatio";
-const KEY_TOPUP_GROUP_RATIO: &str = "TopupGroupRatio";
-const KEY_PRICE: &str = "Price";
-const KEY_USD_RATE: &str = "USDExchangeRate";
-const KEY_QUOTA_PER_UNIT: &str = "QuotaPerUnit";
-
-fn parse_map_field(v: &Value) -> Value {
-    let s = v.as_str().unwrap_or("");
-    if s.is_empty() {
-        return Value::Object(Map::new());
-    }
-    serde_json::from_str(s).unwrap_or(Value::Null)
-}
-
-fn parse_value_field(v: &Value) -> Value {
-    let s = v.as_str().unwrap_or("");
-    if s.is_empty() {
-        return Value::Null;
-    }
-    serde_json::from_str(s).unwrap_or(Value::Null)
-}
-
-fn export(client: &ApiClient) -> Result<Value> {
-    show(client)
 }
 
 fn import(client: &ApiClient, raw: &str) -> Result<Value> {
@@ -285,9 +272,8 @@ fn import(client: &ApiClient, raw: &str) -> Result<Value> {
                 }
                 client.put_json(OPTION, &json!({ "key": key, "value": v.to_string() }))?;
             }
-            other => {
+            _ => {
                 // Ignore unknown keys so export-then-edit round-trips cleanly.
-                let _ = other;
             }
         }
     }
@@ -298,28 +284,28 @@ fn dispatch_model(client: &ApiClient, m: &ModelPricingCommand) -> Result<Value> 
     match m {
         ModelPricingCommand::Get { model } => show_model(client, model),
         ModelPricingCommand::SetRatio { model, ratio } => {
-            write_map_entry(client, KEY_MODEL_RATIO, model, Some(*ratio))
+            write_map_entry(client, K_MODEL_RATIO, model, Some(*ratio))
         }
         ModelPricingCommand::SetPrice { model, price } => {
-            write_map_entry(client, KEY_MODEL_PRICE, model, Some(*price))
+            write_map_entry(client, K_MODEL_PRICE, model, Some(*price))
         }
         ModelPricingCommand::SetCompletionRatio { model, ratio } => {
-            write_map_entry(client, KEY_COMPLETION_RATIO, model, Some(*ratio))
+            write_map_entry(client, K_COMPLETION_RATIO, model, Some(*ratio))
         }
         ModelPricingCommand::SetCacheRatio { model, ratio } => {
-            write_map_entry(client, KEY_CACHE_RATIO, model, Some(*ratio))
+            write_map_entry(client, K_CACHE_RATIO, model, Some(*ratio))
         }
         ModelPricingCommand::SetCreateCacheRatio { model, ratio } => {
-            write_map_entry(client, KEY_CREATE_CACHE_RATIO, model, Some(*ratio))
+            write_map_entry(client, K_CREATE_CACHE_RATIO, model, Some(*ratio))
         }
         ModelPricingCommand::SetImageRatio { model, ratio } => {
-            write_map_entry(client, KEY_IMAGE_RATIO, model, Some(*ratio))
+            write_map_entry(client, K_IMAGE_RATIO, model, Some(*ratio))
         }
         ModelPricingCommand::SetAudioRatio { model, ratio } => {
-            write_map_entry(client, KEY_AUDIO_RATIO, model, Some(*ratio))
+            write_map_entry(client, K_AUDIO_RATIO, model, Some(*ratio))
         }
         ModelPricingCommand::SetAudioCompletionRatio { model, ratio } => {
-            write_map_entry(client, KEY_AUDIO_COMPLETION_RATIO, model, Some(*ratio))
+            write_map_entry(client, K_AUDIO_COMPLETION_RATIO, model, Some(*ratio))
         }
         ModelPricingCommand::Remove { model } => remove_model(client, model),
     }
@@ -328,7 +314,7 @@ fn dispatch_model(client: &ApiClient, m: &ModelPricingCommand) -> Result<Value> 
 fn dispatch_group(client: &ApiClient, g: &GroupPricingCommand) -> Result<Value> {
     match g {
         GroupPricingCommand::Get { group } => {
-            let map = load_map(client, KEY_GROUP_RATIO)?;
+            let map = load_map(client, K_GROUP_RATIO)?;
             Ok(Value::Object({
                 let mut m = Map::new();
                 if let Some(v) = map.get(group) {
@@ -338,10 +324,10 @@ fn dispatch_group(client: &ApiClient, g: &GroupPricingCommand) -> Result<Value> 
             }))
         }
         GroupPricingCommand::SetRatio { group, ratio } => {
-            write_map_entry(client, KEY_GROUP_RATIO, group, Some(*ratio))
+            write_map_entry(client, K_GROUP_RATIO, group, Some(*ratio))
         }
         GroupPricingCommand::Remove { group } => {
-            write_map_entry(client, KEY_GROUP_RATIO, group, None)
+            write_map_entry(client, K_GROUP_RATIO, group, None)
         }
     }
 }
@@ -351,9 +337,9 @@ fn dispatch_base(client: &ApiClient, b: &BasePricingCommand) -> Result<Value> {
         BasePricingCommand::Get => {
             let opts = client.get(OPTION, &[])?;
             Ok(json!({
-                K_PRICE: opts[KEY_PRICE].as_str().unwrap_or(""),
-                K_USD_RATE: opts[KEY_USD_RATE].as_str().unwrap_or(""),
-                K_QUOTA_PER_UNIT: opts[KEY_QUOTA_PER_UNIT].as_str().unwrap_or(""),
+                K_PRICE: opts.get(K_PRICE).and_then(|v| v.as_str()).unwrap_or(""),
+                K_USD_RATE: opts.get(K_USD_RATE).and_then(|v| v.as_str()).unwrap_or(""),
+                K_QUOTA_PER_UNIT: opts.get(K_QUOTA_PER_UNIT).and_then(|v| v.as_str()).unwrap_or(""),
             }))
         }
         BasePricingCommand::Set(args) => {
@@ -361,7 +347,7 @@ fn dispatch_base(client: &ApiClient, b: &BasePricingCommand) -> Result<Value> {
                 if !v.is_finite() {
                     bail!("price must be finite");
                 }
-                client.put_json(OPTION, &json!({ "key": KEY_PRICE, "value": v.to_string() }))?;
+                client.put_json(OPTION, &json!({ "key": K_PRICE, "value": v.to_string() }))?;
             }
             if let Some(v) = args.usd_exchange_rate {
                 if !v.is_finite() {
@@ -369,7 +355,7 @@ fn dispatch_base(client: &ApiClient, b: &BasePricingCommand) -> Result<Value> {
                 }
                 client.put_json(
                     OPTION,
-                    &json!({ "key": KEY_USD_RATE, "value": v.to_string() }),
+                    &json!({ "key": K_USD_RATE, "value": v.to_string() }),
                 )?;
             }
             if let Some(v) = args.quota_per_unit {
@@ -378,14 +364,14 @@ fn dispatch_base(client: &ApiClient, b: &BasePricingCommand) -> Result<Value> {
                 }
                 client.put_json(
                     OPTION,
-                    &json!({ "key": KEY_QUOTA_PER_UNIT, "value": v.to_string() }),
+                    &json!({ "key": K_QUOTA_PER_UNIT, "value": v.to_string() }),
                 )?;
             }
             let opts = client.get(OPTION, &[])?;
             Ok(json!({
-                K_PRICE: opts[KEY_PRICE].as_str().unwrap_or(""),
-                K_USD_RATE: opts[KEY_USD_RATE].as_str().unwrap_or(""),
-                K_QUOTA_PER_UNIT: opts[KEY_QUOTA_PER_UNIT].as_str().unwrap_or(""),
+                K_PRICE: opts.get(K_PRICE).and_then(|v| v.as_str()).unwrap_or(""),
+                K_USD_RATE: opts.get(K_USD_RATE).and_then(|v| v.as_str()).unwrap_or(""),
+                K_QUOTA_PER_UNIT: opts.get(K_QUOTA_PER_UNIT).and_then(|v| v.as_str()).unwrap_or(""),
             }))
         }
     }
@@ -394,8 +380,8 @@ fn dispatch_base(client: &ApiClient, b: &BasePricingCommand) -> Result<Value> {
 fn show_model(client: &ApiClient, model: &str) -> Result<Value> {
     let opts = client.get(OPTION, &[])?;
     let mut out = Map::new();
-    for k in model_map_keys() {
-        let map = parse_map_field(&opts[*k]);
+    for k in MODEL_MAP_KEYS.iter() {
+        let map = lookup(&opts, k);
         if let Some(v) = map.get(model) {
             out.insert((*k).to_string(), v.clone());
         }
@@ -404,7 +390,7 @@ fn show_model(client: &ApiClient, model: &str) -> Result<Value> {
 }
 
 fn remove_model(client: &ApiClient, model: &str) -> Result<Value> {
-    for k in model_map_keys() {
+    for k in MODEL_MAP_KEYS.iter() {
         write_map_entry(client, k, model, None)?;
     }
     Ok(Value::Object(Map::new()))
