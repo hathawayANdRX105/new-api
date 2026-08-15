@@ -28,6 +28,27 @@ enum TopLevel {
     /// Manage upstream channels (P0)
     #[command(subcommand)]
     Channel(cmd::channel::ChannelCommand),
+    /// Manage the model catalog (P0)
+    #[command(subcommand)]
+    Catalog(cmd::catalog::CatalogCommand),
+    /// Manage model and group pricing (P0)
+    #[command(subcommand)]
+    Pricing(cmd::pricing::PricingCommand),
+    /// Manage proxy nodes and system instances (P1)
+    #[command(subcommand)]
+    Device(cmd::device::DeviceCommand),
+    /// Manage admin performance, system tasks, and admin log (P1)
+    #[command(subcommand)]
+    System(cmd::system::SystemCommand),
+    /// Manage admin user, redemption, subscription, group, and non-pricing settings (P2)
+    #[command(subcommand)]
+    Admin(cmd::admin::AdminCommand),
+    /// Manage user API tokens (P2)
+    #[command(subcommand)]
+    Token(cmd::token::TokenCommand),
+    /// Inspect the caller's own usage and quota (P2)
+    #[command(subcommand)]
+    Usage(cmd::usage::UsageCommand),
 }
 
 fn main() -> Result<()> {
@@ -38,5 +59,12 @@ fn main() -> Result<()> {
 
     match cli.command {
         TopLevel::Channel(cmd) => cmd::channel::run(&client, &cmd),
+        TopLevel::Catalog(cmd) => cmd::catalog::run(&client, &cmd),
+        TopLevel::Pricing(cmd) => cmd::pricing::run(&client, &cmd),
+        TopLevel::Device(cmd) => cmd::device::run(&client, &cmd),
+        TopLevel::System(cmd) => cmd::system::run(&client, &cmd),
+        TopLevel::Admin(cmd) => cmd::admin::run(&client, &cmd),
+        TopLevel::Token(cmd) => cmd::token::run(&client, &cmd),
+        TopLevel::Usage(cmd) => cmd::usage::run(&client, &cmd),
     }
 }
