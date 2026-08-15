@@ -41,8 +41,17 @@ def run_lang(lang: str, target: str = ".") -> list[Finding]:
     if not command:
         return [Finding(f"code-{lang}", Severity.WARN, f"{lang}: no command configured")]
     includes = cfg.get("paths_include", [])
-    if includes and not any(ROOT.parent.rglob(p.lstrip("**/")) for p in includes):
-        return [Finding(f"code-{lang}", Severity.INFO, f"{lang}: no matching files (paths_include: {includes})")]
+    excludes = cfg.get("paths_exclude", [])
+    if includes:
+        pats = [p.removeprefix("**/") for p in includes]
+        found = any(
+            p.is_file()
+            and not (excludes and any(x in str(p) for x in excludes))
+            and any(p.match(pat) for pat in pats)
+            for p in ROOT.parent.rglob("*")
+        )
+        if not found:
+            return [Finding(f"code-{lang}", Severity.INFO, f"{lang}: no matching files (paths_include: {includes})")]
 
     cmd = [command] + list(args) + ([] if command == "cargo" else [target])
     try:
