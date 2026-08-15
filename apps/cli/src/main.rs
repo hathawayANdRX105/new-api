@@ -34,6 +34,9 @@ enum TopLevel {
     /// Manage model and group pricing (P0)
     #[command(subcommand)]
     Pricing(cmd::pricing::PricingCommand),
+    /// Manage proxy nodes and system instances (P1)
+    #[command(subcommand)]
+    Device(cmd::device::DeviceCommand),
 }
 
 fn main() -> Result<()> {
@@ -46,5 +49,6 @@ fn main() -> Result<()> {
         TopLevel::Channel(cmd) => cmd::channel::run(&client, &cmd),
         TopLevel::Catalog(cmd) => cmd::catalog::run(&client, &cmd),
         TopLevel::Pricing(cmd) => cmd::pricing::run(&client, &cmd),
+        TopLevel::Device(cmd) => cmd::device::run(&client, &cmd),
     }
 }
