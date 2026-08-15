@@ -49,6 +49,9 @@ enum TopLevel {
     /// Inspect the caller's own usage and quota (P2)
     #[command(subcommand)]
     Usage(cmd::usage::UsageCommand),
+    /// Manage the caller's own profile, password, 2FA, OAuth, and topup (P2)
+    #[command(subcommand)]
+    Account(cmd::account::AccountCommand),
 }
 
 fn main() -> Result<()> {
@@ -66,5 +69,6 @@ fn main() -> Result<()> {
         TopLevel::Admin(cmd) => cmd::admin::run(&client, &cmd),
         TopLevel::Token(cmd) => cmd::token::run(&client, &cmd),
         TopLevel::Usage(cmd) => cmd::usage::run(&client, &cmd),
+        TopLevel::Account(cmd) => cmd::account::run(&client, &cmd),
     }
 }
