@@ -147,8 +147,8 @@ fn parse_response(status: StatusCode, text: &str) -> Result<Value> {
     Ok(value)
 }
 
-<<<<<<< HEAD
-=======
+
+
 fn parse_response_no_envelope(status: StatusCode, text: &str) -> Result<Value> {
     if text.is_empty() {
         if status.is_success() {
@@ -168,7 +168,6 @@ fn parse_response_no_envelope(status: StatusCode, text: &str) -> Result<Value> {
     Ok(value)
 }
 
->>>>>>> feat/cli-212-admin
 /// Strip bearer/query details from network errors so the token and
 /// upstream URLs never reach logs. `reqwest::Error::to_string` may embed
 /// the original URL including path/query; we replace that with a stable
