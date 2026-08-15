@@ -79,6 +79,11 @@ impl ApiClient {
         self.request(reqwest::Method::DELETE, path, &[], None)
     }
 
+    /// DELETE with query params and no JSON body (e.g. log-files cleanup).
+    pub fn delete_with_query(&self, path: &str, query: &[(&str, String)]) -> Result<Value> {
+        self.request(reqwest::Method::DELETE, path, query, None)
+    }
+
     pub fn delete_json(&self, path: &str, body: &Value) -> Result<Value> {
         self.request(reqwest::Method::DELETE, path, &[], Some(body))
     }
@@ -111,6 +116,7 @@ fn parse_response(status: StatusCode, text: &str) -> Result<Value> {
     }
     Ok(value)
 }
+
 /// Strip bearer/query details from network errors so the token and
 /// upstream URLs never reach logs. `reqwest::Error::to_string` may embed
 /// the original URL including path/query; we replace that with a stable

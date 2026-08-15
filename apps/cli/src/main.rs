@@ -37,6 +37,9 @@ enum TopLevel {
     /// Manage proxy nodes and system instances (P1)
     #[command(subcommand)]
     Device(cmd::device::DeviceCommand),
+    /// Manage admin performance, system tasks, and admin log (P1)
+    #[command(subcommand)]
+    System(cmd::system::SystemCommand),
 }
 
 fn main() -> Result<()> {
@@ -50,5 +53,6 @@ fn main() -> Result<()> {
         TopLevel::Catalog(cmd) => cmd::catalog::run(&client, &cmd),
         TopLevel::Pricing(cmd) => cmd::pricing::run(&client, &cmd),
         TopLevel::Device(cmd) => cmd::device::run(&client, &cmd),
+        TopLevel::System(cmd) => cmd::system::run(&client, &cmd),
     }
 }
