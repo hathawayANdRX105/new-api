@@ -123,10 +123,12 @@ fn sync_ratio_channels_uses_ratio_sync() {
 }
 
 #[test]
-fn upstream_apply_preserves_empty_body() {
+fn upstream_apply_asserts_empty_body() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
-        when.method(POST).path("/api/models/sync_upstream");
+        when.method(POST)
+            .path("/api/models/sync_upstream")
+            .json_body(json!({}));
         then.status(200)
             .json_body(json!({"success": true, "data": 0}));
     });
