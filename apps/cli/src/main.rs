@@ -31,6 +31,9 @@ enum TopLevel {
     /// Manage the model catalog (P0)
     #[command(subcommand)]
     Catalog(cmd::catalog::CatalogCommand),
+    /// Manage model and group pricing (P0)
+    #[command(subcommand)]
+    Pricing(cmd::pricing::PricingCommand),
 }
 
 fn main() -> Result<()> {
@@ -42,5 +45,6 @@ fn main() -> Result<()> {
     match cli.command {
         TopLevel::Channel(cmd) => cmd::channel::run(&client, &cmd),
         TopLevel::Catalog(cmd) => cmd::catalog::run(&client, &cmd),
+        TopLevel::Pricing(cmd) => cmd::pricing::run(&client, &cmd),
     }
 }
