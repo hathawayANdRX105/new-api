@@ -2,10 +2,10 @@
 
 use httpmock::prelude::HttpMockRequest;
 use httpmock::prelude::*;
+use newapi_cli_lib::client::ApiClient;
 use newapi_cli_lib::cmd::pricing::{
     BasePricingCommand, BaseSetArgs, GroupPricingCommand, ModelPricingCommand, PricingCommand,
 };
-use newapi_cli_lib::client::ApiClient;
 use serde_json::json;
 
 fn client_for(server: &MockServer) -> ApiClient {
@@ -53,9 +53,9 @@ fn set_ratio_preserves_siblings() {
             .json_body(options_with_model_ratio(r#"{"gpt-4o":2.5,"claude":1.5}"#));
     });
     let put = server.mock(|when, then| {
-        when.method(PUT).path("/api/option").matches(|req| {
-            key_value_ok(req, "ModelRatio", r#"{"claude":1.5,"gpt-4o":3.0}"#)
-        });
+        when.method(PUT)
+            .path("/api/option")
+            .matches(|req| key_value_ok(req, "ModelRatio", r#"{"claude":1.5,"gpt-4o":3.0}"#));
         then.status(200).json_body(json!({"success": true}));
     });
     let cli = PricingCommand::Model(ModelPricingCommand::SetRatio {
@@ -107,12 +107,13 @@ fn set_group_ratio_targets_group_ratio_key() {
     let server = MockServer::start();
     let get = server.mock(|when, then| {
         when.method(GET).path("/api/option");
-        then.status(200).json_body(options_with_model_ratio(r#"{}"#));
+        then.status(200)
+            .json_body(options_with_model_ratio(r#"{}"#));
     });
     let put = server.mock(|when, then| {
-        when.method(PUT).path("/api/option").matches(|req| {
-            key_value_ok(req, "GroupRatio", r#"{"vip":0.8}"#)
-        });
+        when.method(PUT)
+            .path("/api/option")
+            .matches(|req| key_value_ok(req, "GroupRatio", r#"{"vip":0.8}"#));
         then.status(200).json_body(json!({"success": true}));
     });
     let cli = PricingCommand::Group(GroupPricingCommand::SetRatio {
@@ -171,7 +172,8 @@ fn malformed_option_value_errors() {
     let server = MockServer::start();
     server.mock(|when, then| {
         when.method(GET).path("/api/option");
-        then.status(200).json_body(options_with_model_ratio("not json"));
+        then.status(200)
+            .json_body(options_with_model_ratio("not json"));
     });
     let cli = PricingCommand::Model(ModelPricingCommand::SetRatio {
         model: "gpt-4o".into(),
@@ -186,7 +188,8 @@ fn show_returns_parsed_maps() {
     let server = MockServer::start();
     server.mock(|when, then| {
         when.method(GET).path("/api/option");
-        then.status(200).json_body(options_with_model_ratio(r#"{"gpt-4o":2.5}"#));
+        then.status(200)
+            .json_body(options_with_model_ratio(r#"{"gpt-4o":2.5}"#));
     });
     let cli = PricingCommand::Show;
     let out = newapi_cli_lib::cmd::pricing::dispatch(&client_for(&server), &cli).unwrap();
