@@ -1,5 +1,6 @@
 //! Command dispatch module.
 
+pub mod admin;
 pub mod catalog;
 pub mod channel;
 pub mod device;
