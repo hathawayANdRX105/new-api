@@ -28,6 +28,9 @@ enum TopLevel {
     /// Manage upstream channels (P0)
     #[command(subcommand)]
     Channel(cmd::channel::ChannelCommand),
+    /// Manage the model catalog (P0)
+    #[command(subcommand)]
+    Catalog(cmd::catalog::CatalogCommand),
 }
 
 fn main() -> Result<()> {
@@ -38,5 +41,6 @@ fn main() -> Result<()> {
 
     match cli.command {
         TopLevel::Channel(cmd) => cmd::channel::run(&client, &cmd),
+        TopLevel::Catalog(cmd) => cmd::catalog::run(&client, &cmd),
     }
 }
