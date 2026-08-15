@@ -133,10 +133,7 @@ pub fn dispatch(client: &ApiClient, cmd: &CatalogCommand) -> Result<Value> {
 
 fn dispatch_model(client: &ApiClient, m: &ModelCommand) -> Result<Value> {
     match m {
-        ModelCommand::List(a) => {
-            let q = page_query(a.p, a.page_size);
-            client.get(MODELS, &q)
-        }
+        ModelCommand::List(a) => client.get(MODELS, &page_query(a.p, a.page_size)),
         ModelCommand::Search(a) => {
             let mut q: Vec<(&str, String)> = vec![("keyword", a.keyword.clone())];
             if let Some(v) = &a.vendor {
@@ -148,9 +145,7 @@ fn dispatch_model(client: &ApiClient, m: &ModelCommand) -> Result<Value> {
             if let Some(s) = &a.sync {
                 q.push(("sync", s.clone()));
             }
-            for (k, v) in page_query(a.p, a.page_size) {
-                q.push((k, v));
-            }
+            q.extend(page_query(a.p, a.page_size));
             client.get(&format!("{}/search", MODELS), &q)
         }
         ModelCommand::Get { id } => client.get(&format!("{}/{}", MODELS, id), &[]),
@@ -169,10 +164,7 @@ fn dispatch_model(client: &ApiClient, m: &ModelCommand) -> Result<Value> {
 
 fn dispatch_vendor(client: &ApiClient, v: &VendorCommand) -> Result<Value> {
     match v {
-        VendorCommand::List(a) => {
-            let q = page_query(a.p, a.page_size);
-            client.get(VENDORS, &q)
-        }
+        VendorCommand::List(a) => client.get(VENDORS, &page_query(a.p, a.page_size)),
         VendorCommand::Search { keyword } => client.get(
             &format!("{}/search", VENDORS),
             &[("keyword", keyword.clone())],
