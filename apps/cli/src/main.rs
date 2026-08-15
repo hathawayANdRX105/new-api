@@ -46,6 +46,9 @@ enum TopLevel {
     /// Manage user API tokens (P2)
     #[command(subcommand)]
     Token(cmd::token::TokenCommand),
+    /// Inspect the caller's own usage and quota (P2)
+    #[command(subcommand)]
+    Usage(cmd::usage::UsageCommand),
 }
 
 fn main() -> Result<()> {
@@ -62,5 +65,6 @@ fn main() -> Result<()> {
         TopLevel::System(cmd) => cmd::system::run(&client, &cmd),
         TopLevel::Admin(cmd) => cmd::admin::run(&client, &cmd),
         TopLevel::Token(cmd) => cmd::token::run(&client, &cmd),
+        TopLevel::Usage(cmd) => cmd::usage::run(&client, &cmd),
     }
 }

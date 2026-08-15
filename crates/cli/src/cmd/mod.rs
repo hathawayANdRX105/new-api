@@ -7,3 +7,4 @@ pub mod device;
 pub mod pricing;
 pub mod system;
 pub mod token;
+pub mod usage;
