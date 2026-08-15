@@ -1,6 +1,7 @@
 //! Shared brand metadata. The only place the project name lives.
 //! Rename here and every env var, config path, and clap name follows.
 
+#[derive(Debug, Clone, Copy)]
 pub struct Brand {
     pub bin_name: &'static str,
     pub env_prefix: &'static str,

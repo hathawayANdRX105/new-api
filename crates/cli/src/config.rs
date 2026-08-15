@@ -7,10 +7,20 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::brand::BRAND;
-#[derive(Debug)]
 pub struct Config {
     pub base_url: String,
+    // Token intentionally omitted from `Debug` so accidental formatting
+    // (logs, error context, panics) never leaks the bearer token.
     pub token: String,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("base_url", &self.base_url)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 pub fn load_config(cli_url: Option<&str>, cli_token: Option<&str>) -> Result<Config> {

@@ -111,12 +111,13 @@ fn parse_response(status: StatusCode, text: &str) -> Result<Value> {
     }
     Ok(value)
 }
-
-/// Strip query/bearer from network errors that might leak connection details.
+/// Strip bearer/query details from network errors so the token and
+/// upstream URLs never reach logs. `reqwest::Error::to_string` may embed
+/// the original URL including path/query; we replace that with a stable
+/// short message.
 fn redact_url_err(e: reqwest::Error) -> String {
-    let s = e.to_string();
-    // reqwest errors rarely include the URL; if present we keep host only.
-    s
+    let _ = e; // intentionally dropped
+    "network request failed".to_string()
 }
 
 #[cfg(test)]
