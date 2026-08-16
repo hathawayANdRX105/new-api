@@ -84,12 +84,12 @@ app/api/
 | `just test` | 运行全部 Go 测试(api + relaykit, GOWORK=off) |
 | `just reset-setup` | 重置本地安装向导状态(PostgreSQL 或 SQLite) |
 
-### Workspace 注意事项
+### relaykit 本地模块
 
-`go.work` 将 `app/api` 与 `modules/relaykit` 放在同一 workspace:
+`apps/api/modules/relaykit/` 是 `apps/api` 的本地 replace 子模块,无需 go.work:
 
-- 根模块构建: `go build ./...` (自动使用 workspace)
-- relaykit 独立构建验证: `cd modules/relaykit && GOWORK=off go build ./...` (relaykit 必须不依赖根模块)
+- 根模块构建: `cd apps/api && GOWORK=off go build ./...`
+- relaykit 独立构建验证: `cd apps/api/modules/relaykit && GOWORK=off go build ./...` (relaykit 必须不依赖根模块)
 
 ---
 
@@ -153,7 +153,7 @@ Router → Controller → Service → Model
 
 ## 七、relaykit 独立模块
 
-`modules/relaykit/` 是一个独立可构建的 Go 模块,提供协议转换核心能力:
+`apps/api/modules/relaykit/` 是一个独立可构建的 Go 模块,提供协议转换核心能力:
 
 - 模块路径: `github.com/QuantumNous/new-api/relaykit`
 - 不得依赖根模块的任何包

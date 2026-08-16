@@ -39,14 +39,14 @@ apps/api/       — Go backend application (main module)
   web/dist/      — Frontend build output copied here for go:embed (gitignored)
 apps/web/       — Frontend (React 19, Rsbuild, Base UI, Tailwind)
   src/i18n/    — Frontend internationalization (i18next, en/zh/zh-TW/fr/ru/ja/vi)
-modules/       — Independent Go modules
-  relaykit/    — Protocol conversion module (independently buildable)
+  modules/relaykit/ — Protocol conversion module (independently buildable, local replace in go.mod)
+  web/dist/      — Frontend build output copied here for go:embed (gitignored)
 db/            — Database migration assets
 deploy/        — Dockerfile, compose, systemd unit, Kubernetes manifests
   k8s/         — Kubernetes manifests (master/worker split, PG/Redis, Ingress)
 scripts/       — Engineering helper scripts
 docs/          — Documentation, including docs/k8s/
-go.work        — Go workspace (apps/api + modules/relaykit)
+(no go.work — apps/api is the sole Go project root; relaykit is a local replace)
 ```
 
 ### Frontend embed contract
@@ -87,10 +87,10 @@ gitignored.
 
 ### Backend Rules
 
-**relaykit module independence:** The `modules/relaykit/` Go module MUST remain independently buildable.
+**relaykit module independence:** The `apps/api/modules/relaykit/` Go module MUST remain independently buildable.
 
-- Code under `modules/relaykit/` MUST NOT import or depend on packages from the root `new-api` module, or rely on root-only configuration, generated files, or workspace wiring.
-- Any change affecting `modules/relaykit/` or its public APIs MUST be verified with `cd modules/relaykit && GOWORK=off go build ./...`; a successful root-module build is not sufficient.
+- Code under `apps/api/modules/relaykit/` MUST NOT import or depend on packages from the root `new-api` module, or rely on root-only configuration, generated files, or workspace wiring.
+- Any change affecting `apps/api/modules/relaykit/` or its public APIs MUST be verified with `cd apps/api/modules/relaykit && GOWORK=off go build ./...`; a successful root-module build is not sufficient.
 
 **JSON package:** All JSON marshal/unmarshal operations MUST use the wrapper functions in `apps/api/common/json.go`:
 

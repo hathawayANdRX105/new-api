@@ -20,7 +20,7 @@ WORKDIR /build
 ADD apps/api/go.mod apps/api/go.sum ./apps/api/
 # relaykit is a local submodule referenced via replace; its go.mod must be
 # present for go mod download to resolve the main module graph.
-ADD modules/relaykit/go.mod ./modules/relaykit/go.mod
+ADD apps/api/modules/relaykit/go.mod ./apps/api/modules/relaykit/go.mod
 RUN cd apps/api && go mod download
 
 COPY . .

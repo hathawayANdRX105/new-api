@@ -1,6 +1,7 @@
 WEB_DIR := "./apps/web"
 API_DIR := "./apps/api"
 API_EMBED_DIR := "./apps/api/web/dist"
+GO_BIN_CACHE := env_var_or_default("GO_BIN_CACHE", env_var("HOME") + "/.cache/new-api-bin")
 DEV_WEB_PORT := env_var_or_default("DEV_WEB_PORT", "5173")
 DEV_COMPOSE_FILE := "deploy/docker-compose.dev.yml"
 DEV_POSTGRES_SERVICE := "postgres"
@@ -34,6 +35,16 @@ clean-web:
 start-api:
     cd "{{ API_DIR }}" && go run main.go &
 
+# Start api dev server with incremental build cache
+run-api:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    branch="$(git branch --show-current 2>/dev/null || echo 'detached')"
+    bin_name="new-api-$(echo "$branch" | tr '/' '-')"
+    mkdir -p "{{ GO_BIN_CACHE }}"
+    cd "{{ API_DIR }}" && GOWORK=off go build -o "{{ GO_BIN_CACHE }}/$bin_name" .
+    "{{ GO_BIN_CACHE }}/$bin_name"
+
 # Start docker dev api services (postgres, etc.)
 dev-api:
     docker compose -f "{{ DEV_COMPOSE_FILE }}" up -d
@@ -63,7 +74,7 @@ test:
     root_packages="$(GOWORK=off go list -e ./... | grep -vxF "$root_module")"
     GOWORK=off go test $root_packages
     echo "Testing relaykit Go module..."
-    cd ../modules/relaykit && GOWORK=off go test ./...
+    cd modules/relaykit && GOWORK=off go test ./...
 
 # Reset local setup wizard state (postgres or sqlite)
 reset-setup:
