@@ -1,7 +1,8 @@
 //! Integration tests for `usage` dispatch against a mock server.
 //!
-//! Asserts URL paths/methods/query and that the command only hits the
-//! self-scoped log endpoints.
+//! Asserts URL paths/methods/query and that the command only hits
+//! self-scoped log / data / drawing / task endpoints. Forbidden filters
+//! are rejected before any HTTP call.
 
 use httpmock::prelude::*;
 use newapi_cli_lib::client::ApiClient;
@@ -17,7 +18,7 @@ fn d(client: &ApiClient, cmd: &UsageCommand) -> serde_json::Value {
 }
 
 #[test]
-fn usage_list_forwards_filters() {
+fn log_list_forwards_filters() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET)
@@ -32,13 +33,14 @@ fn usage_list_forwards_filters() {
     });
     d(
         &client_for(&server),
-        &UsageCommand::List {
+        &UsageCommand::LogList {
             p: Some(1),
             page_size: Some(10),
             start_timestamp: Some(100),
             end_timestamp: Some(200),
             model_name: Some("gpt-4o".into()),
             r#type: None,
+            token_name: None,
             request_id: None,
             upstream_request_id: None,
         },
@@ -47,7 +49,7 @@ fn usage_list_forwards_filters() {
 }
 
 #[test]
-fn usage_list_omits_unset() {
+fn log_list_omits_unset() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET)
@@ -58,13 +60,14 @@ fn usage_list_omits_unset() {
     });
     d(
         &client_for(&server),
-        &UsageCommand::List {
+        &UsageCommand::LogList {
             p: None,
             page_size: None,
             start_timestamp: None,
             end_timestamp: None,
             model_name: None,
             r#type: None,
+            token_name: None,
             request_id: None,
             upstream_request_id: None,
         },
@@ -73,7 +76,28 @@ fn usage_list_omits_unset() {
 }
 
 #[test]
-fn usage_stat_hits_self_stat() {
+fn log_search_hits_self_search() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET)
+            .path("/api/log/self/search")
+            .query_param("keyword", "foo");
+        then.status(200)
+            .json_body(json!({"success": true, "data": {"items": []}}));
+    });
+    d(
+        &client_for(&server),
+        &UsageCommand::LogSearch {
+            keyword: "foo".into(),
+            p: None,
+            page_size: None,
+        },
+    );
+    m.assert();
+}
+
+#[test]
+fn log_stat_hits_self_stat() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET).path("/api/log/self/stat");
@@ -82,44 +106,84 @@ fn usage_stat_hits_self_stat() {
     });
     d(
         &client_for(&server),
-        &UsageCommand::Stat {
+        &UsageCommand::LogStat {
             start_timestamp: None,
             end_timestamp: None,
             model_name: None,
+            token_name: None,
         },
     );
     m.assert();
 }
 
 #[test]
-fn usage_token_hits_self_token() {
+fn drawing_list_hits_mj_self() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
-        when.method(GET).path("/api/log/self/token");
+        when.method(GET).path("/api/mj/self");
         then.status(200)
             .json_body(json!({"success": true, "data": []}));
     });
     d(
         &client_for(&server),
-        &UsageCommand::Token {
-            start_timestamp: None,
-            end_timestamp: None,
+        &UsageCommand::DrawingList {
+            p: None,
+            page_size: None,
         },
     );
     m.assert();
 }
 
 #[test]
-fn usage_models_hits_self_models() {
+fn task_list_hits_task_self() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
-        when.method(GET).path("/api/log/self/models");
+        when.method(GET).path("/api/task/self");
         then.status(200)
             .json_body(json!({"success": true, "data": []}));
     });
     d(
         &client_for(&server),
-        &UsageCommand::Models {
+        &UsageCommand::TaskList {
+            p: None,
+            page_size: None,
+        },
+    );
+    m.assert();
+}
+
+#[test]
+fn quota_dates_hits_data_self() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET)
+            .path("/api/data/self")
+            .query_param("start_timestamp", "100")
+            .query_param("end_timestamp", "200");
+        then.status(200)
+            .json_body(json!({"success": true, "data": {}}));
+    });
+    d(
+        &client_for(&server),
+        &UsageCommand::QuotaDates {
+            start_timestamp: Some(100),
+            end_timestamp: Some(200),
+        },
+    );
+    m.assert();
+}
+
+#[test]
+fn flow_dates_hits_data_flow_self() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET).path("/api/data/flow/self");
+        then.status(200)
+            .json_body(json!({"success": true, "data": {}}));
+    });
+    d(
+        &client_for(&server),
+        &UsageCommand::FlowDates {
             start_timestamp: None,
             end_timestamp: None,
         },
@@ -129,8 +193,8 @@ fn usage_models_hits_self_models() {
 
 #[test]
 fn usage_never_hits_admin_log_root() {
-    // Only /api/log/self* paths are configured; if any other /api/log path
-    // were ever hit, the mock would not match and the test would fail.
+    // Only /api/log/self* paths are configured; if any other /api/log
+    // path were ever hit, dispatch would error and the test would fail.
     let server = MockServer::start();
     let self_m = server.mock(|when, then| {
         when.method(GET).path("/api/log/self");
@@ -139,13 +203,14 @@ fn usage_never_hits_admin_log_root() {
     });
     d(
         &client_for(&server),
-        &UsageCommand::List {
+        &UsageCommand::LogList {
             p: None,
             page_size: None,
             start_timestamp: None,
             end_timestamp: None,
             model_name: None,
             r#type: None,
+            token_name: None,
             request_id: None,
             upstream_request_id: None,
         },

@@ -64,8 +64,12 @@ pub enum UserCommand {
     Delete(UserDeleteArgs),
     /// Body must include action (promote|demote|enable|disable|delete|add_quota)
     /// and optional mode (add|subtract|override) + value.
+    /// Override and subtract quota modes require --yes because they mutate
+    /// the user's balance destructively.
     Manage {
         json: String,
+        #[arg(long)]
+        yes: bool,
     },
     ResetPasskey {
         id: i32,
@@ -105,8 +109,13 @@ pub enum RedemptionCommand {
     },
     Delete {
         id: i32,
+        #[arg(long)]
+        yes: bool,
     },
-    DeleteInvalid,
+    DeleteInvalid {
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Args)]
@@ -120,20 +129,52 @@ pub struct SubPlanListArgs {
 #[derive(Subcommand)]
 pub enum SubPlanCommand {
     List(SubPlanListArgs),
-    Create { json: String },
-    Update { id: i32, json: String },
-    SetStatus { id: i32, status: i32 },
-    Bind { json: String },
-    Reset { id: i32 },
+    Create {
+        json: String,
+    },
+    Update {
+        id: i32,
+        json: String,
+    },
+    SetStatus {
+        id: i32,
+        status: i32,
+    },
+    Bind {
+        json: String,
+    },
+    Reset {
+        id: i32,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
 pub enum SubUserCommand {
-    List { id: i32 },
-    Create { id: i32, json: String },
-    Invalidate { id: i32 },
-    Delete { id: i32 },
-    Reset { id: i32, json: String },
+    List {
+        id: i32,
+    },
+    Create {
+        id: i32,
+        json: String,
+    },
+    Invalidate {
+        id: i32,
+        #[arg(long)]
+        yes: bool,
+    },
+    Delete {
+        id: i32,
+        #[arg(long)]
+        yes: bool,
+    },
+    Reset {
+        id: i32,
+        json: String,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -224,13 +265,17 @@ fn dispatch_user(client: &ApiClient, u: &UserCommand) -> Result<Value> {
             client.put_json(USER, &body)
         }
         UserCommand::Delete(args) => {
-            if !args.yes {
-                bail!("user delete requires --yes");
-            }
+            require_yes(args.yes, "user delete")?;
             client.delete(&format!("{}/{}", USER, args.id))
         }
-        UserCommand::Manage { json } => {
+        UserCommand::Manage { json, yes } => {
             let body = read_json_arg(json)?;
+            // Override and subtract quota modes are destructive (they
+            // mutate or reduce the user's balance); require --yes.
+            let mode = body.get("mode").and_then(|m| m.as_str()).unwrap_or("");
+            if matches!(mode, "override" | "subtract") && !*yes {
+                bail!("user manage with mode={mode} requires --yes");
+            }
             client.post_json(&format!("{}/manage", USER), &body)
         }
         UserCommand::ResetPasskey { id } => {
@@ -266,8 +311,14 @@ fn dispatch_redemption(client: &ApiClient, r: &RedemptionCommand) -> Result<Valu
             REDEMPTION,
             &json!({ "id": id, "status": status, "status_only": true }),
         ),
-        RedemptionCommand::Delete { id } => client.delete(&format!("{}/{}", REDEMPTION, id)),
-        RedemptionCommand::DeleteInvalid => client.delete(&format!("{}/invalid", REDEMPTION)),
+        RedemptionCommand::Delete { id, yes } => {
+            require_yes(*yes, "redemption delete")?;
+            client.delete(&format!("{}/{}", REDEMPTION, id))
+        }
+        RedemptionCommand::DeleteInvalid { yes } => {
+            require_yes(*yes, "redemption delete-invalid")?;
+            client.delete(&format!("{}/invalid", REDEMPTION))
+        }
     }
 }
 
@@ -297,10 +348,13 @@ fn dispatch_sub_plan(client: &ApiClient, p: &SubPlanCommand) -> Result<Value> {
             let body = read_json_arg(json)?;
             client.post_json(SUB_BIND, &body)
         }
-        SubPlanCommand::Reset { id } => client.post_json(
-            &format!("{}/{}/subscriptions/reset", SUB_PLAN, id),
-            &json!({}),
-        ),
+        SubPlanCommand::Reset { id, yes } => {
+            require_yes(*yes, "subscription plan reset")?;
+            client.post_json(
+                &format!("{}/{}/subscriptions/reset", SUB_PLAN, id),
+                &json!({}),
+            )
+        }
     }
 }
 
@@ -313,11 +367,16 @@ fn dispatch_sub_user(client: &ApiClient, u: &SubUserCommand) -> Result<Value> {
             let body = read_json_arg(json)?;
             client.post_json(&format!("{}/{}/subscriptions", SUB_USER, id), &body)
         }
-        SubUserCommand::Invalidate { id } => {
+        SubUserCommand::Invalidate { id, yes } => {
+            require_yes(*yes, "subscription user invalidate")?;
             client.post_json(&format!("{}/{}/invalidate", SUB_USER_SUB, id), &json!({}))
         }
-        SubUserCommand::Delete { id } => client.delete(&format!("{}/{}", SUB_USER_SUB, id)),
-        SubUserCommand::Reset { id, json } => {
+        SubUserCommand::Delete { id, yes } => {
+            require_yes(*yes, "subscription user delete")?;
+            client.delete(&format!("{}/{}", SUB_USER_SUB, id))
+        }
+        SubUserCommand::Reset { id, json, yes } => {
+            require_yes(*yes, "subscription user reset")?;
             let body = read_json_arg(json)?;
             client.post_json(&format!("{}/{}/reset", SUB_USER_SUB, id), &body)
         }
@@ -362,4 +421,11 @@ fn dispatch_setting(client: &ApiClient, s: &SettingCommand) -> Result<Value> {
             client.put_json(OPTION, &body)
         }
     }
+}
+
+fn require_yes(yes: bool, op: &str) -> Result<()> {
+    if !yes {
+        bail!("{op} requires --yes");
+    }
+    Ok(())
 }

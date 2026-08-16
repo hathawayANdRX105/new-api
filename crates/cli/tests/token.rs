@@ -1,6 +1,7 @@
 //! Integration tests for `token` dispatch against a mock server.
 //!
-//! Asserts URL paths/methods and the `--yes` guard on delete.
+//! Asserts URL paths/methods and the `--yes` guard on destructive
+//! operations (delete, batch-delete, reveal-batch).
 
 use httpmock::prelude::*;
 use newapi_cli_lib::client::ApiClient;
@@ -144,6 +145,136 @@ fn token_delete_with_yes_hits_endpoint() {
     d(
         &client_for(&server),
         &TokenCommand::Delete { id: 1, yes: true },
+    );
+    m.assert();
+}
+
+#[test]
+fn token_batch_delete_without_yes_sends_no_http() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST).path("/api/token/batch/delete");
+        then.status(200).json_body(json!({"success": true}));
+    });
+    let body = json!({"ids": [1, 2, 3]}).to_string();
+    let res = newapi_cli_lib::cmd::token::dispatch(
+        &client_for(&server),
+        &TokenCommand::BatchDelete {
+            json: body,
+            yes: false,
+        },
+    );
+    assert!(res.is_err());
+    assert_eq!(m.hits(), 0);
+}
+
+#[test]
+fn token_batch_delete_with_yes_hits_endpoint() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/token/batch/delete")
+            .json_body(json!({"ids": [1, 2, 3]}));
+        then.status(200).json_body(json!({"success": true}));
+    });
+    let body = json!({"ids": [1, 2, 3]}).to_string();
+    d(
+        &client_for(&server),
+        &TokenCommand::BatchDelete {
+            json: body,
+            yes: true,
+        },
+    );
+    m.assert();
+}
+
+#[test]
+fn token_set_status_uses_query() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/token/3/status")
+            .query_param("status", "1");
+        then.status(200).json_body(json!({"success": true}));
+    });
+    d(
+        &client_for(&server),
+        &TokenCommand::SetStatus { id: 3, status: 1 },
+    );
+    m.assert();
+}
+
+#[test]
+fn token_auto_group_posts_json() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/token/auto_group")
+            .json_body(json!({"model": "gpt-4o", "group": "vip"}));
+        then.status(200).json_body(json!({"success": true}));
+    });
+    let body = json!({"model": "gpt-4o", "group": "vip"}).to_string();
+    d(
+        &client_for(&server),
+        &TokenCommand::AutoGroup { json: body },
+    );
+    m.assert();
+}
+
+#[test]
+fn token_reveal_forwards_ids() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/token/reveal")
+            .query_param("ids", "1,2,3");
+        then.status(200)
+            .json_body(json!({"success": true, "data": ["sk-a", "sk-b", "sk-c"]}));
+    });
+    d(
+        &client_for(&server),
+        &TokenCommand::Reveal {
+            ids: "1,2,3".into(),
+        },
+    );
+    m.assert();
+}
+
+#[test]
+fn token_reveal_batch_without_yes_sends_no_http() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST).path("/api/token/reveal/batch");
+        then.status(200).json_body(json!({"success": true}));
+    });
+    let body = json!({"ids": [1, 2]}).to_string();
+    let res = newapi_cli_lib::cmd::token::dispatch(
+        &client_for(&server),
+        &TokenCommand::RevealBatch {
+            json: body,
+            yes: false,
+        },
+    );
+    assert!(res.is_err());
+    assert_eq!(m.hits(), 0);
+}
+
+#[test]
+fn token_reveal_batch_with_yes_hits_endpoint() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/api/token/reveal/batch")
+            .json_body(json!({"ids": [1, 2]}));
+        then.status(200).json_body(json!({"success": true}));
+    });
+    let body = json!({"ids": [1, 2]}).to_string();
+    d(
+        &client_for(&server),
+        &TokenCommand::RevealBatch {
+            json: body,
+            yes: true,
+        },
     );
     m.assert();
 }

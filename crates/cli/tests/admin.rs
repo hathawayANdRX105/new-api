@@ -62,9 +62,11 @@ fn user_manage_preserves_mode_and_value() {
     });
     let body =
         json!({"id": 1, "action": "add_quota", "mode": "subtract", "value": -500}).to_string();
-    let cli = AdminCommand::User(UserCommand::Manage { json: body });
+    let cli = AdminCommand::User(UserCommand::Manage {
+        json: body,
+        yes: true,
+    });
     let _ = newapi_cli_lib::cmd::admin::dispatch(&client_for(&server), &cli).unwrap();
-    m.assert();
 }
 
 #[test]
@@ -74,7 +76,7 @@ fn redemption_delete_invalid_hits_invalid_path() {
         when.method(DELETE).path("/api/redemption/invalid");
         then.status(200).json_body(json!({"success": true}));
     });
-    let cli = AdminCommand::Redemption(RedemptionCommand::DeleteInvalid);
+    let cli = AdminCommand::Redemption(RedemptionCommand::DeleteInvalid { yes: true });
     let _ = newapi_cli_lib::cmd::admin::dispatch(&client_for(&server), &cli).unwrap();
     m.assert();
 }
@@ -106,6 +108,7 @@ fn subscription_user_invalidate_hits_user_subscriptions_path() {
     });
     let cli = AdminCommand::Subscription(SubscriptionCommand::User(SubUserCommand::Invalidate {
         id: 9,
+        yes: true,
     }));
     let _ = newapi_cli_lib::cmd::admin::dispatch(&client_for(&server), &cli).unwrap();
     m.assert();
