@@ -43,10 +43,7 @@ fn update_uses_put() {
     // and run update separately:
     drop(m);
     let body = json!({"display_name": "x"}).to_string();
-    d(
-        &client_for(&server),
-        &AccountCommand::Update { json: body },
-    );
+    d(&client_for(&server), &AccountCommand::Update { json: body });
     put_m.assert();
 }
 
@@ -130,7 +127,8 @@ fn topup_history_hits_topup_self() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET).path("/api/topup/self");
-        then.status(200).json_body(json!({"success": true, "data": []}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": []}));
     });
     d(
         &client_for(&server),
@@ -150,7 +148,8 @@ fn topup_history_forwards_pagination() {
             .path("/api/topup/self")
             .query_param("p", "3")
             .query_param("page_size", "15");
-        then.status(200).json_body(json!({"success": true, "data": []}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": []}));
     });
     d(
         &client_for(&server),
@@ -172,10 +171,7 @@ fn topup_posts_to_topup_self() {
         then.status(200).json_body(json!({"success": true}));
     });
     let body = json!({"amount": 100, "payment_method": "card"}).to_string();
-    d(
-        &client_for(&server),
-        &AccountCommand::Topup { json: body },
-    );
+    d(&client_for(&server), &AccountCommand::Topup { json: body });
     m.assert();
 }
 

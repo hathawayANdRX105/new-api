@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use crate::client::ApiClient;
 use crate::json_input::read_json_arg;
@@ -52,30 +52,60 @@ pub struct UserDeleteArgs {
 pub enum UserCommand {
     List(UserListArgs),
     Search(UserSearchArgs),
-    Get { id: i32 },
-    Create { json: String },
-    Update { json: String },
+    Get {
+        id: i32,
+    },
+    Create {
+        json: String,
+    },
+    Update {
+        json: String,
+    },
     Delete(UserDeleteArgs),
     /// Body must include action (promote|demote|enable|disable|delete|add_quota)
     /// and optional mode (add|subtract|override) + value.
-    Manage { json: String },
-    ResetPasskey { id: i32 },
-    Reset2fa { id: i32 },
-    OauthBindings { id: i32 },
+    Manage {
+        json: String,
+    },
+    ResetPasskey {
+        id: i32,
+    },
+    Reset2fa {
+        id: i32,
+    },
+    OauthBindings {
+        id: i32,
+    },
     /// Clear a binding by binding_type (e.g. wechat, telegram, email).
-    ClearBinding { id: i32, binding_type: String },
+    ClearBinding {
+        id: i32,
+        binding_type: String,
+    },
 }
 
 #[derive(Subcommand)]
 pub enum RedemptionCommand {
     List(UserListArgs),
-    Search { keyword: String },
-    Get { id: i32 },
-    Create { json: String },
-    Update { json: String },
+    Search {
+        keyword: String,
+    },
+    Get {
+        id: i32,
+    },
+    Create {
+        json: String,
+    },
+    Update {
+        json: String,
+    },
     /// Status-only update (server treats status as integer).
-    SetStatus { id: i32, status: i32 },
-    Delete { id: i32 },
+    SetStatus {
+        id: i32,
+        status: i32,
+    },
+    Delete {
+        id: i32,
+    },
     DeleteInvalid,
 }
 
@@ -116,11 +146,16 @@ pub enum SubscriptionCommand {
 
 #[derive(Subcommand)]
 pub enum SettingCommand {
-    Get { key: String },
+    Get {
+        key: String,
+    },
     /// Update a non-pricing option key (e.g. SMTP, OAuth, payment secrets).
     /// Secret keys are never echoed in error or debug output; they only flow
     /// through `--json` / `@file`.
-    Set { key: String, json: String },
+    Set {
+        key: String,
+        json: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -205,10 +240,9 @@ fn dispatch_user(client: &ApiClient, u: &UserCommand) -> Result<Value> {
         UserCommand::OauthBindings { id } => {
             client.get(&format!("{}/{}/oauth/bindings", USER, id), &[])
         }
-        UserCommand::ClearBinding { id, binding_type } => client.delete(&format!(
-            "{}/{}/bindings/{}",
-            USER, id, binding_type
-        )),
+        UserCommand::ClearBinding { id, binding_type } => {
+            client.delete(&format!("{}/{}/bindings/{}", USER, id, binding_type))
+        }
     }
 }
 
@@ -272,25 +306,20 @@ fn dispatch_sub_plan(client: &ApiClient, p: &SubPlanCommand) -> Result<Value> {
 
 fn dispatch_sub_user(client: &ApiClient, u: &SubUserCommand) -> Result<Value> {
     match u {
-        SubUserCommand::List { id } => client.get(
-            &format!("{}/{}/subscriptions", SUB_USER, id),
-            &[],
-        ),
+        SubUserCommand::List { id } => {
+            client.get(&format!("{}/{}/subscriptions", SUB_USER, id), &[])
+        }
         SubUserCommand::Create { id, json } => {
             let body = read_json_arg(json)?;
             client.post_json(&format!("{}/{}/subscriptions", SUB_USER, id), &body)
         }
-        SubUserCommand::Invalidate { id } => client.post_json(
-            &format!("{}/{}/invalidate", SUB_USER_SUB, id),
-            &json!({}),
-        ),
+        SubUserCommand::Invalidate { id } => {
+            client.post_json(&format!("{}/{}/invalidate", SUB_USER_SUB, id), &json!({}))
+        }
         SubUserCommand::Delete { id } => client.delete(&format!("{}/{}", SUB_USER_SUB, id)),
         SubUserCommand::Reset { id, json } => {
             let body = read_json_arg(json)?;
-            client.post_json(
-                &format!("{}/{}/reset", SUB_USER_SUB, id),
-                &body,
-            )
+            client.post_json(&format!("{}/{}/reset", SUB_USER_SUB, id), &body)
         }
     }
 }

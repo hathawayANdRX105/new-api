@@ -20,7 +20,8 @@ fn token_list_uses_token_root() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET).path("/api/token");
-        then.status(200).json_body(json!({"success": true, "data": []}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": []}));
     });
     d(
         &client_for(&server),
@@ -40,7 +41,8 @@ fn token_list_forwards_pagination() {
             .path("/api/token")
             .query_param("p", "2")
             .query_param("page_size", "25");
-        then.status(200).json_body(json!({"success": true, "data": []}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": []}));
     });
     d(
         &client_for(&server),
@@ -59,7 +61,8 @@ fn token_search_forwards_keyword() {
         when.method(GET)
             .path("/api/token/search")
             .query_param("keyword", "alice");
-        then.status(200).json_body(json!({"success": true, "data": []}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": []}));
     });
     d(
         &client_for(&server),
@@ -80,10 +83,7 @@ fn token_get_hits_id() {
         then.status(200)
             .json_body(json!({"success": true, "data": {"id": 7}}));
     });
-    d(
-        &client_for(&server),
-        &TokenCommand::Get { id: 7 },
-    );
+    d(&client_for(&server), &TokenCommand::Get { id: 7 });
     m.assert();
 }
 
@@ -98,10 +98,7 @@ fn token_create_posts_json() {
             .json_body(json!({"success": true, "data": {"key": "sk-xxx"}}));
     });
     let body = json!({"name": "tk", "group": "default"}).to_string();
-    d(
-        &client_for(&server),
-        &TokenCommand::Create { json: body },
-    );
+    d(&client_for(&server), &TokenCommand::Create { json: body });
     m.assert();
 }
 

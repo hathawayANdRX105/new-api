@@ -31,19 +31,12 @@ pub enum TokenCommand {
         page_size: Option<u32>,
     },
     /// GET /api/token/:id
-    Get {
-        id: i32,
-    },
+    Get { id: i32 },
     /// POST /api/token — body must include name, group, expires_at, etc.
-    Create {
-        json: String,
-    },
+    Create { json: String },
     /// PATCH /api/token — update fields (status, expired_at, remain_quota,
-        /// unlimited_quota, model_limits, group, name, etc.)
-    Update {
-        id: i32,
-        json: String,
-    },
+    /// unlimited_quota, model_limits, group, name, etc.)
+    Update { id: i32, json: String },
     /// DELETE /api/token/:id (requires --yes)
     Delete {
         id: i32,

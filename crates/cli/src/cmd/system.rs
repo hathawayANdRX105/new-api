@@ -62,9 +62,7 @@ pub enum TaskCommand {
         r#type: String,
     },
     /// GET /api/system-task/:task_id
-    Get {
-        task_id: String,
-    },
+    Get { task_id: String },
     /// POST /api/system-task/log-cleanup (requires --yes)
     LogCleanup {
         target_timestamp: i64,

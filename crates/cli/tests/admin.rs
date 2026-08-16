@@ -1,11 +1,11 @@
 //! Integration tests for `admin` user, redemption, subscription, and setting.
 
 use httpmock::prelude::*;
-use newapi_cli_lib::cmd::admin::{
-    AdminCommand, RedemptionCommand, SettingCommand, SubPlanCommand, SubscriptionCommand,
-    SubUserCommand, UserCommand, UserDeleteArgs, UserListArgs,
-};
 use newapi_cli_lib::client::ApiClient;
+use newapi_cli_lib::cmd::admin::{
+    AdminCommand, RedemptionCommand, SettingCommand, SubPlanCommand, SubUserCommand,
+    SubscriptionCommand, UserCommand, UserDeleteArgs, UserListArgs,
+};
 use serde_json::json;
 
 fn client_for(server: &MockServer) -> ApiClient {
@@ -17,7 +17,8 @@ fn user_list_uses_user_root() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET).path("/api/user");
-        then.status(200).json_body(json!({"success": true, "data": []}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": []}));
     });
     let cli = AdminCommand::User(UserCommand::List(UserListArgs {
         p: None,
@@ -30,10 +31,7 @@ fn user_list_uses_user_root() {
 #[test]
 fn user_delete_requires_yes() {
     let server = MockServer::start();
-    let cli = AdminCommand::User(UserCommand::Delete(UserDeleteArgs {
-        id: 1,
-        yes: false,
-    }));
+    let cli = AdminCommand::User(UserCommand::Delete(UserDeleteArgs { id: 1, yes: false }));
     let err = newapi_cli_lib::cmd::admin::dispatch(&client_for(&server), &cli).unwrap_err();
     assert!(err.to_string().contains("--yes"));
 }
@@ -45,10 +43,7 @@ fn user_delete_with_yes_hits_endpoint() {
         when.method(DELETE).path("/api/user/1");
         then.status(200).json_body(json!({"success": true}));
     });
-    let cli = AdminCommand::User(UserCommand::Delete(UserDeleteArgs {
-        id: 1,
-        yes: true,
-    }));
+    let cli = AdminCommand::User(UserCommand::Delete(UserDeleteArgs { id: 1, yes: true }));
     let _ = newapi_cli_lib::cmd::admin::dispatch(&client_for(&server), &cli).unwrap();
     m.assert();
 }
@@ -57,17 +52,16 @@ fn user_delete_with_yes_hits_endpoint() {
 fn user_manage_preserves_mode_and_value() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
-        when.method(POST)
-            .path("/api/user/manage")
-            .json_body(json!({
-                "id": 1,
-                "action": "add_quota",
-                "mode": "subtract",
-                "value": -500
-            }));
+        when.method(POST).path("/api/user/manage").json_body(json!({
+            "id": 1,
+            "action": "add_quota",
+            "mode": "subtract",
+            "value": -500
+        }));
         then.status(200).json_body(json!({"success": true}));
     });
-    let body = json!({"id": 1, "action": "add_quota", "mode": "subtract", "value": -500}).to_string();
+    let body =
+        json!({"id": 1, "action": "add_quota", "mode": "subtract", "value": -500}).to_string();
     let cli = AdminCommand::User(UserCommand::Manage { json: body });
     let _ = newapi_cli_lib::cmd::admin::dispatch(&client_for(&server), &cli).unwrap();
     m.assert();
@@ -94,9 +88,10 @@ fn subscription_plan_set_status_uses_patch() {
             .json_body(json!({"status": 2}));
         then.status(200).json_body(json!({"success": true}));
     });
-    let cli = AdminCommand::Subscription(SubscriptionCommand::Plan(
-        SubPlanCommand::SetStatus { id: 3, status: 2 },
-    ));
+    let cli = AdminCommand::Subscription(SubscriptionCommand::Plan(SubPlanCommand::SetStatus {
+        id: 3,
+        status: 2,
+    }));
     let _ = newapi_cli_lib::cmd::admin::dispatch(&client_for(&server), &cli).unwrap();
     m.assert();
 }
@@ -105,7 +100,8 @@ fn subscription_plan_set_status_uses_patch() {
 fn subscription_user_invalidate_hits_user_subscriptions_path() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
-        when.method(POST).path("/api/subscription/admin/user_subscriptions/9/invalidate");
+        when.method(POST)
+            .path("/api/subscription/admin/user_subscriptions/9/invalidate");
         then.status(200).json_body(json!({"success": true}));
     });
     let cli = AdminCommand::Subscription(SubscriptionCommand::User(SubUserCommand::Invalidate {
@@ -120,7 +116,8 @@ fn group_list_uses_group_root() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET).path("/api/group");
-        then.status(200).json_body(json!({"success": true, "data": []}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": []}));
     });
     let cli = AdminCommand::Group;
     let _ = newapi_cli_lib::cmd::admin::dispatch(&client_for(&server), &cli).unwrap();
@@ -132,7 +129,8 @@ fn permission_catalog_uses_authz_catalog() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET).path("/api/authz/catalog");
-        then.status(200).json_body(json!({"success": true, "data": {}}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": {}}));
     });
     let cli = AdminCommand::PermissionCatalog;
     let _ = newapi_cli_lib::cmd::admin::dispatch(&client_for(&server), &cli).unwrap();

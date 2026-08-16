@@ -95,11 +95,7 @@ pub fn dispatch(client: &ApiClient, cmd: &UsageCommand) -> Result<Value> {
             model_name,
         } => client.get(
             &format!("{}/stat", SELF),
-            &stat_query(
-                *start_timestamp,
-                *end_timestamp,
-                model_name.as_deref(),
-            ),
+            &stat_query(*start_timestamp, *end_timestamp, model_name.as_deref()),
         ),
         UsageCommand::Token {
             start_timestamp,
@@ -118,6 +114,7 @@ pub fn dispatch(client: &ApiClient, cmd: &UsageCommand) -> Result<Value> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn list_query(
     p: Option<u32>,
     page_size: Option<u32>,
@@ -174,7 +171,10 @@ fn stat_query(
     q
 }
 
-fn ts_query(start_timestamp: Option<i64>, end_timestamp: Option<i64>) -> Vec<(&'static str, String)> {
+fn ts_query(
+    start_timestamp: Option<i64>,
+    end_timestamp: Option<i64>,
+) -> Vec<(&'static str, String)> {
     let mut q: Vec<(&'static str, String)> = Vec::new();
     if let Some(s) = start_timestamp {
         q.push(("start_timestamp", s.to_string()));

@@ -361,7 +361,8 @@ fn log_search_admin_path() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET).path("/api/log/search");
-        then.status(200).json_body(json!({"success": true, "data": []}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": []}));
     });
     let cmd = SystemCommand::Log(LogCommand::Search);
     d(&client_for(&server), &cmd);

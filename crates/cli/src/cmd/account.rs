@@ -22,13 +22,9 @@ pub enum AccountCommand {
     /// PUT /api/user/self — update display name, email, etc.
     /// Sensitive fields (password, OAuth credentials) only flow through
     /// their dedicated subcommands.
-    Update {
-        json: String,
-    },
+    Update { json: String },
     /// POST /api/user/self/change_password — body {old_password,new_password}
-    ChangePassword {
-        json: String,
-    },
+    ChangePassword { json: String },
     /// POST /api/user/self/2fa/setup — start 2FA enrolment
     Setup2fa,
     /// POST /api/user/self/2fa (requires --yes to commit the response)
@@ -45,9 +41,7 @@ pub enum AccountCommand {
     /// GET /api/user/self/oauth — list OAuth bindings for the caller
     Oauth,
     /// POST /api/user/self/oauth — body {provider, code, redirect_uri, state}
-    LinkOauth {
-        json: String,
-    },
+    LinkOauth { json: String },
     /// DELETE /api/user/self/oauth/:provider (requires --yes)
     UnlinkOauth {
         provider: String,
@@ -62,9 +56,7 @@ pub enum AccountCommand {
         page_size: Option<u32>,
     },
     /// POST /api/topup/self — body {amount, payment_method}
-    Topup {
-        json: String,
-    },
+    Topup { json: String },
 }
 
 pub fn run(client: &ApiClient, cmd: &AccountCommand) -> Result<()> {
@@ -84,8 +76,14 @@ pub fn dispatch(client: &ApiClient, cmd: &AccountCommand) -> Result<Value> {
             let body = read_json_arg(json)?;
             client.post_json(&format!("{}/change_password", SELF), &body)
         }
-        AccountCommand::Setup2fa => client.post_json(&format!("{}/2fa/setup", SELF), &Value::Null)
-            .or_else(|_| client.post_json(&format!("{}/2fa/setup", SELF), &Value::Object(Default::default()))),
+        AccountCommand::Setup2fa => client
+            .post_json(&format!("{}/2fa/setup", SELF), &Value::Null)
+            .or_else(|_| {
+                client.post_json(
+                    &format!("{}/2fa/setup", SELF),
+                    &Value::Object(Default::default()),
+                )
+            }),
         AccountCommand::Enable2fa { json, yes } => {
             if !*yes {
                 bail!("2fa enable requires --yes");

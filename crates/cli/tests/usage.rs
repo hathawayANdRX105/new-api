@@ -50,9 +50,9 @@ fn usage_list_forwards_filters() {
 fn usage_list_omits_unset() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
-        when.method(GET).path("/api/log/self").matches(|req| {
-            req.query_params.as_ref().map_or(true, Vec::is_empty)
-        });
+        when.method(GET)
+            .path("/api/log/self")
+            .matches(|req| req.query_params.as_ref().map_or(true, Vec::is_empty));
         then.status(200)
             .json_body(json!({"success": true, "data": {"items": []}}));
     });
@@ -96,7 +96,8 @@ fn usage_token_hits_self_token() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET).path("/api/log/self/token");
-        then.status(200).json_body(json!({"success": true, "data": []}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": []}));
     });
     d(
         &client_for(&server),
@@ -113,7 +114,8 @@ fn usage_models_hits_self_models() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(GET).path("/api/log/self/models");
-        then.status(200).json_body(json!({"success": true, "data": []}));
+        then.status(200)
+            .json_body(json!({"success": true, "data": []}));
     });
     d(
         &client_for(&server),

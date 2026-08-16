@@ -147,8 +147,6 @@ fn parse_response(status: StatusCode, text: &str) -> Result<Value> {
     Ok(value)
 }
 
-
-
 fn parse_response_no_envelope(status: StatusCode, text: &str) -> Result<Value> {
     if text.is_empty() {
         if status.is_success() {
