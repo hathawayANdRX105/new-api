@@ -28,6 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import useDialogState from '@/hooks/use-dialog'
 import { useStatus } from '@/hooks/use-status'
 import { useUserDisplay } from '@/hooks/use-user-display'
+import { useWalletBalance } from '@/hooks/use-wallet-balance'
 import { isPricingModuleEnabled } from '@/lib/nav-modules'
 import type { AuthUser } from '@/stores/auth-store'
 
@@ -85,6 +86,7 @@ function MobileUserProfile({ user, onNavigate }: MobileUserProfileProps) {
   const pricingEnabled = isPricingModuleEnabled(status)
   const [signOutOpen, setSignOutOpen] = useDialogState()
   const { displayName, initials, roleLabel } = useUserDisplay(user)
+  const walletBalance = useWalletBalance()
 
   if (!user) return null
 
@@ -133,6 +135,11 @@ function MobileUserProfile({ user, onNavigate }: MobileUserProfileProps) {
         >
           <Wallet className='size-4' />
           {t('Wallet')}
+          {walletBalance != null && (
+            <span className='text-muted-foreground ms-auto font-mono text-xs tabular-nums'>
+              {walletBalance}
+            </span>
+          )}
         </Link>
         {pricingEnabled && (
           <Link

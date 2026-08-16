@@ -40,6 +40,7 @@ import { useTranslation } from 'react-i18next'
 
 import { type SidebarData } from '@/components/layout/types'
 import { useStatus } from '@/hooks/use-status'
+import { useWalletBalance } from '@/hooks/use-wallet-balance'
 import { isPricingModuleEnabled } from '@/lib/nav-modules'
 import { ROLE } from '@/lib/roles'
 
@@ -53,6 +54,7 @@ export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
   const { status } = useStatus()
   const pricingEnabled = isPricingModuleEnabled(status)
+  const walletBalance = useWalletBalance()
 
   return {
     navGroups: [
@@ -122,6 +124,7 @@ export function useSidebarData(): SidebarData {
             title: t('Wallet'),
             url: '/wallet',
             icon: Wallet,
+            badge: walletBalance ?? undefined,
           },
           {
             title: t('Profile'),
