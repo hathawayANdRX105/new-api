@@ -1,7 +1,8 @@
 ignore_paths:
   - ".wt/"
   - ".githooks/"
-  - "node_modules/"
+  - "node_modules"
+  - ".git/"
   - "target/"
   - "__pycache__/"
   - ".git/"

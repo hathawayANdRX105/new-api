@@ -6,6 +6,7 @@ Usage:
 Config: .githooks/spec/workspace_file_placement.yaml
 """
 from __future__ import annotations
+import os
 import re
 import sys
 from pathlib import Path
@@ -32,8 +33,11 @@ def run(base: str = ".") -> list[Finding]:
         suggestion = rule.get("suggestion", "")
         regex = re.compile(pattern)
 
-        for f in base_path.rglob("*"):
-            if f.is_file():
+        for root, dirs, files in os.walk(base_path):
+            dirs[:] = [d for d in dirs
+                       if not any(ig in str(Path(root, d).relative_to(base_path)) for ig in ignore)]
+            for name in files:
+                f = Path(root, name)
                 rel = str(f.relative_to(base_path))
                 if any(ig in rel for ig in ignore):
                     continue
@@ -51,8 +55,11 @@ def run(base: str = ".") -> list[Finding]:
         expected_dir = rule.get("expected_dir", "")
         regex = re.compile(pattern)
 
-        for f in base_path.rglob("*"):
-            if f.is_file():
+        for root, dirs, files in os.walk(base_path):
+            dirs[:] = [d for d in dirs
+                       if not any(ig in str(Path(root, d).relative_to(base_path)) for ig in ignore)]
+            for name in files:
+                f = Path(root, name)
                 rel = str(f.relative_to(base_path))
                 if any(ig in rel for ig in ignore):
                     continue
