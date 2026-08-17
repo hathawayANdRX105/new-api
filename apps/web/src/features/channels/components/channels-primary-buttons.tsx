@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import {
-  Plus,
   MoreHorizontal,
   Settings2,
   Trash2,
@@ -47,11 +46,6 @@ import {
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
@@ -69,8 +63,6 @@ import { useChannels } from './channels-provider'
 export function ChannelsPrimaryButtons() {
   const { t } = useTranslation()
   const {
-    setOpen,
-    setCurrentRow,
     enableTagMode,
     setEnableTagMode,
     idSort,
@@ -146,30 +138,6 @@ export function ChannelsPrimaryButtons() {
             onCheckedChange={handleIdSortToggle}
           />
         </div>
-
-        {/* Create Channel */}
-        <Tooltip>
-          <TooltipTrigger render={<span className='inline-flex' />}>
-            <Button
-              onClick={() => {
-                if (!canEditSensitive) return
-                setCurrentRow(null)
-                setOpen('create-channel')
-              }}
-              size='sm'
-              disabled={!canEditSensitive}
-            >
-              <Plus className='h-4 w-4' />
-              <span className='max-sm:hidden'>{t('Create Channel')}</span>
-              <span className='sm:hidden'>{t('Create')}</span>
-            </Button>
-          </TooltipTrigger>
-          {!canEditSensitive && (
-            <TooltipContent>
-              {t('No permission to perform this action')}
-            </TooltipContent>
-          )}
-        </Tooltip>
 
         {/* More Actions */}
         <DropdownMenu>

@@ -33,11 +33,11 @@ export function ChannelsDialogs() {
 
   return (
     <>
-      {/* Channel Create/Update Drawer */}
+      {/* Channel editor drawer for existing channels */}
       <ChannelMutateDrawer
-        open={open === 'create-channel' || open === 'update-channel'}
+        open={open === 'update-channel'}
         onOpenChange={(v) => !v && setOpen(null)}
-        currentRow={open === 'update-channel' ? currentRow : null}
+        currentRow={currentRow}
       />
 
       {/* Test Channel Dialog */}

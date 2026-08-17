@@ -35,7 +35,6 @@ import type { Channel } from '../types'
 // ============================================================================
 
 type DialogType =
-  | 'create-channel'
   | 'update-channel'
   | 'test-channel'
   | 'balance-query'
@@ -48,9 +47,12 @@ type DialogType =
   | null
 
 type UpstreamUpdateState = ReturnType<typeof useChannelUpstreamUpdates>
+type ChannelsPageTab = 'create' | 'channels'
 
 type ChannelsContextType = {
   open: DialogType
+  pageTab: ChannelsPageTab
+  setPageTab: (tab: ChannelsPageTab) => void
   setOpen: (open: DialogType) => void
   currentRow: Channel | null
   setCurrentRow: (row: Channel | null) => void
@@ -81,6 +83,7 @@ const ChannelsContext = createContext<ChannelsContextType | undefined>(
 
 export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState<DialogType>(null)
+  const [pageTab, setPageTab] = useState<ChannelsPageTab>('channels')
   const [currentRow, setCurrentRow] = useState<Channel | null>(null)
   const [currentTag, setCurrentTag] = useState<string | null>(null)
   const [enableTagMode, setEnableTagMode] = useState(() => {
@@ -104,6 +107,8 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<ChannelsContextType>(
     () => ({
       open,
+      pageTab,
+      setPageTab,
       setOpen,
       currentRow,
       setCurrentRow,
@@ -121,6 +126,7 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       open,
+      pageTab,
       currentRow,
       currentTag,
       enableTagMode,

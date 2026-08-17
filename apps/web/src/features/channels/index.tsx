@@ -16,92 +16,109 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
-import { Settings2 } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { SectionPageLayout } from '@/components/layout'
-import { Badge } from '@/components/ui/badge'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { ROLE } from '@/lib/roles'
+import { Main } from '@/components/layout'
+import { PageFooterProvider } from '@/components/layout/components/page-footer'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { hasPermission, ADMIN_PERMISSION_ACTIONS, ADMIN_PERMISSION_RESOURCES } from '@/lib/admin-permissions'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getChannelOps } from './api'
+import { ChannelCreateTab } from './components/channel-create-tab'
+import { ChannelListTab } from './components/channel-list-tab'
 import { ChannelsDialogs } from './components/channels-dialogs'
 import { ChannelsPrimaryButtons } from './components/channels-primary-buttons'
-import { ChannelsProvider } from './components/channels-provider'
-import { ChannelsTable } from './components/channels-table'
+import { ChannelsProvider, useChannels } from './components/channels-provider'
 
-export function Channels() {
+function ChannelsContent() {
   const { t } = useTranslation()
-  const isRoot = useAuthStore(
-    (state) => state.auth.user?.role === ROLE.SUPER_ADMIN
+  const { pageTab, setPageTab, setCurrentRow } = useChannels()
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const canCreateChannel = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
   )
-  const channelOpsQuery = useQuery({
-    queryKey: ['channel-ops'],
-    queryFn: getChannelOps,
-    retry: false,
-    staleTime: 5 * 60 * 1000,
-  })
-  const retryTimes = channelOpsQuery.data?.data?.retry_times
-  const retryLabel =
-    typeof retryTimes === 'number' ? `${t('Max Retries')}: ${retryTimes}` : null
-  let retryBadge = null
-  if (retryLabel) {
-    retryBadge = isRoot ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Badge
-              variant='outline'
-              className='shrink-0 cursor-pointer'
-              aria-label={t('Retry Settings')}
-              render={
-                <Link
-                  to='/system-settings/models/$section'
-                  params={{ section: 'routing-reliability' }}
-                />
-              }
-            />
-          }
-        >
-          <span>{retryLabel}</span>
-          <Settings2 data-icon='inline-end' />
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>{t('Retry Settings')}</p>
-        </TooltipContent>
-      </Tooltip>
-    ) : (
-      <Badge variant='outline' className='shrink-0'>
-        {retryLabel}
-      </Badge>
-    )
-  }
+  const [footerContainer, setFooterContainer] = useState<HTMLDivElement | null>(
+    null
+  )
 
   return (
-    <ChannelsProvider>
-      <SectionPageLayout fixedContent>
-        <SectionPageLayout.Title>
-          <span className='flex min-w-0 items-center gap-2'>
-            <span className='truncate'>{t('Channels')}</span>
-            {retryBadge}
-          </span>
-        </SectionPageLayout.Title>
-        <SectionPageLayout.Actions>
-          <ChannelsPrimaryButtons />
-        </SectionPageLayout.Actions>
-        <SectionPageLayout.Content>
-          <ChannelsTable />
-        </SectionPageLayout.Content>
-      </SectionPageLayout>
+    <>
+      <PageFooterProvider container={footerContainer}>
+        <Main>
+          <Tabs
+            value={pageTab}
+            onValueChange={(value) => {
+              const next = value as 'create' | 'channels'
+              if (next === 'create') setCurrentRow(null)
+              setPageTab(next)
+            }}
+            className='flex h-full min-h-0 flex-col'
+          >
+            <div className='flex shrink-0 flex-col gap-2 px-3 pt-3 pb-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3 sm:gap-y-2 sm:px-4 sm:pt-5 sm:pb-3'>
+              <h2 className='truncate text-base font-bold tracking-tight sm:text-lg'>
+                {t('Channels')}
+              </h2>
+              <TabsList className='grid w-full grid-cols-2 bg-muted/60 p-1 sm:w-fit'>
+                <TabsTrigger
+                  value='create'
+                  disabled={!canCreateChannel}
+                  onClick={() => setCurrentRow(null)}
+                  className='h-7 px-3 text-xs font-medium data-active:bg-background data-active:shadow-sm'
+                >
+                  <span className='sm:hidden'>{t('Create')}</span>
+                  <span className='hidden sm:inline'>{t('Create Channel')}</span>
+                </TabsTrigger>
+                <TabsTrigger
+                  value='channels'
+                  className='h-7 px-3 text-xs font-medium data-active:bg-background data-active:shadow-sm'
+                >
+                  {t('Channels')}
+                </TabsTrigger>
+              </TabsList>
+            </div>
+
+            <div className='min-h-0 flex-1 overflow-hidden px-3 pt-1 pb-3 sm:px-4 sm:pt-1.5 sm:pb-4'>
+              <TabsContent
+                value='create'
+                keepMounted
+                className='m-0 flex h-full min-h-0 flex-col overflow-hidden data-hidden:hidden'
+              >
+                <ChannelCreateTab />
+              </TabsContent>
+
+              <TabsContent
+                value='channels'
+                keepMounted
+                className='m-0 flex h-full min-h-0 flex-col gap-3 overflow-hidden data-hidden:hidden'
+              >
+                <div className='flex shrink-0 flex-wrap items-center justify-end gap-2 px-1 pb-3 sm:gap-x-4'>
+                  <ChannelsPrimaryButtons />
+                </div>
+                <ChannelListTab />
+              </TabsContent>
+            </div>
+
+            <div
+              ref={setFooterContainer}
+              className='bg-background shrink-0 border-t px-3 py-2.5 empty:hidden sm:px-4 sm:py-3'
+              hidden={pageTab !== 'channels'}
+            />
+          </Tabs>
+        </Main>
+      </PageFooterProvider>
 
       <ChannelsDialogs />
+    </>
+  )
+}
+
+export function Channels() {
+  return (
+    <ChannelsProvider>
+      <ChannelsContent />
     </ChannelsProvider>
   )
 }

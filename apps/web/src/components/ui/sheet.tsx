@@ -26,8 +26,20 @@ import * as React from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-function Sheet({ ...props }: SheetPrimitive.Root.Props) {
-  return <SheetPrimitive.Root data-slot='sheet' {...props} />
+function Sheet({
+  inline = false,
+  children,
+  ...props
+}: SheetPrimitive.Root.Props & { inline?: boolean }) {
+  if (inline) {
+    return <>{children}</>
+  }
+
+  return (
+    <SheetPrimitive.Root data-slot='sheet' {...props}>
+      {children}
+    </SheetPrimitive.Root>
+  )
 }
 
 function SheetTrigger({ ...props }: SheetPrimitive.Trigger.Props) {
@@ -60,16 +72,29 @@ function SheetContent({
   children,
   side = 'right',
   showCloseButton = true,
+  inline = false,
   ...props
 }: SheetPrimitive.Popup.Props & {
   side?: 'top' | 'right' | 'bottom' | 'left'
   showCloseButton?: boolean
+  inline?: boolean
 }) {
   // Side-specific classes are emitted via JS conditionals (rather than
   // `data-[side=*]:` variants) so consumer-provided width overrides such as
   // `sm:max-w-2xl` can be correctly merged by `tailwind-merge` and the CSS
   // cascade — the data-attribute variants would otherwise win on specificity
   // and trap the panel at the default `sm:max-w-sm` width.
+  if (inline) {
+    return (
+      <div
+        data-slot='sheet-content'
+        className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', className)}
+      >
+        {children}
+      </div>
+    )
+  }
+
   return (
     <SheetPortal>
       <SheetOverlay />
