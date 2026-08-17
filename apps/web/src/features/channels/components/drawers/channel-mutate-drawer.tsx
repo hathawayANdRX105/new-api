@@ -192,10 +192,14 @@ import {
   ChannelModelsSection,
 } from './sections'
 
+type ChannelEditorPresentation = 'drawer' | 'inline'
+
 type ChannelMutateDrawerProps = {
-  open: boolean
+  open?: boolean
   onOpenChange: (open: boolean) => void
   currentRow?: Channel | null
+  presentation?: ChannelEditorPresentation
+  formId?: string
 }
 
 type ModelMappingGuardrail = {
@@ -608,8 +612,13 @@ export function ChannelMutateDrawer({
   open,
   onOpenChange,
   currentRow,
+  presentation,
+  formId,
 }: ChannelMutateDrawerProps) {
   const { t } = useTranslation()
+  const isInline = presentation === 'inline'
+  const isPresented = isInline || Boolean(open)
+  const editorFormId = formId ?? 'channel-form'
   const queryClient = useQueryClient()
   const { setOpen } = useChannels()
   const currentUser = useAuthStore((s) => s.auth.user)
@@ -697,13 +706,13 @@ export function ChannelMutateDrawer({
   } = useSecureVerification()
 
   useEffect(() => {
-    if (!open) {
+    if (!isPresented) {
       setChannelKey(null)
       setIsChannelKeyLoading(false)
     } else if (channelId) {
       setChannelKey(null)
     }
-  }, [open, channelId])
+  }, [channelId, isPresented])
 
   // Check if this is a multi-key channel
   const isMultiKeyChannel =
@@ -714,6 +723,15 @@ export function ChannelMutateDrawer({
     resolver: zodResolver(channelFormSchema),
     defaultValues: CHANNEL_FORM_DEFAULT_VALUES,
   })
+
+  const resetEditorState = useCallback(() => {
+    form.reset(CHANNEL_FORM_DEFAULT_VALUES)
+    advancedNavScrollPendingRef.current = false
+    setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.identity)
+    setExpandedEditorNavItemId(undefined)
+    setAdvancedSettingsOpen(false)
+    setClipboardConnectionInfo(null)
+  }, [form])
 
   // Watch form values for conditional rendering
   const multiKeyMode = form.watch('multi_key_mode')
@@ -784,10 +802,10 @@ export function ChannelMutateDrawer({
   })
 
   useEffect(() => {
-    if (!open) {
+    if (!isPresented) {
       resetDoubaoApiUnlock()
     }
-  }, [open, resetDoubaoApiUnlock])
+  }, [isPresented, resetDoubaoApiUnlock])
 
   const applyConnectionInfo = useCallback(
     (connectionInfo: ChannelConnectionInfo) => {
@@ -825,7 +843,7 @@ export function ChannelMutateDrawer({
   }, [applyConnectionInfo, t])
 
   useEffect(() => {
-    if (!open || isEditing) {
+    if (!isPresented || isEditing) {
       setClipboardConnectionInfo(null)
       return
     }
@@ -848,7 +866,7 @@ export function ChannelMutateDrawer({
     return () => {
       cancelled = true
     }
-  }, [isEditing, open])
+  }, [isEditing, isPresented])
 
   // Helper computed values
   const isBatchMode =
@@ -1258,14 +1276,14 @@ export function ChannelMutateDrawer({
       initialModelMappingRef.current = channelData.data.model_mapping || ''
       initialStatusCodeMappingRef.current =
         channelData.data.status_code_mapping || ''
-    } else if (!isEditing) {
+    } else if (!isEditing && !isInline) {
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
     }
-  }, [isEditing, channelData, form])
+  }, [channelData, form, isEditing, isInline])
 
   // Handle type change - set default values for specific types
   useEffect(() => {
@@ -1556,9 +1574,10 @@ export function ChannelMutateDrawer({
         queryKey: channelsQueryKeys.detail(channelId),
       })
     }
+    resetEditorState()
     onOpenChange(false)
     setOpen(null)
-  }, [channelId, queryClient, onOpenChange, setOpen])
+  }, [channelId, onOpenChange, queryClient, resetEditorState, setOpen])
 
   // Show missing models confirmation dialog
   const confirmMissingModelMappings = useCallback(
@@ -1815,7 +1834,7 @@ export function ChannelMutateDrawer({
   }, [advancedSettingsOpen, handleAdvancedSettingsOpenChange])
 
   useEffect(() => {
-    if (!open || isChannelDetailLoading) return
+    if (!isPresented || isChannelDetailLoading) return
     const formElement = channelFormRef.current
     if (!formElement) return
 
@@ -1829,7 +1848,7 @@ export function ChannelMutateDrawer({
       formElement.removeEventListener('scroll', updateActiveEditorSection)
       window.removeEventListener('resize', updateActiveEditorSection)
     }
-  }, [isChannelDetailLoading, open, updateActiveEditorSection])
+  }, [isChannelDetailLoading, isPresented, updateActiveEditorSection])
 
   const onInvalid: SubmitErrorHandler<ChannelFormValues> = useCallback(
     (errors) => {
@@ -1846,44 +1865,78 @@ export function ChannelMutateDrawer({
     (v: boolean) => {
       onOpenChange(v)
       if (!v) {
-        form.reset(CHANNEL_FORM_DEFAULT_VALUES)
-        advancedNavScrollPendingRef.current = false
-        setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.identity)
-        setExpandedEditorNavItemId(undefined)
-        setAdvancedSettingsOpen(false)
-        setClipboardConnectionInfo(null)
+        resetEditorState()
       }
     },
-    [onOpenChange, form]
+    [onOpenChange, resetEditorState]
   )
 
   return (
     <>
-      <Sheet open={open} onOpenChange={handleOpenChange}>
-        <SheetContent className={sideDrawerContentClassName('sm:max-w-5xl')}>
+      <Sheet
+        inline={isInline}
+        open={isPresented}
+        modal={!isInline}
+        onOpenChange={handleOpenChange}
+      >
+        <SheetContent
+          inline={isInline}
+          className={cn(
+            isInline
+              ? 'bg-background text-foreground flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border shadow-none'
+              : sideDrawerContentClassName('sm:max-w-5xl')
+          )}
+        >
           <SheetHeader className={sideDrawerHeaderClassName()}>
             <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
               <div className='min-w-0'>
-                <SheetTitle className='flex items-center gap-3'>
-                  <IconBadge tone='info' size='title'>
-                    <ChannelTypeLogo type={currentType} size={22} />
-                  </IconBadge>
-                  <span>
-                    {isEditing ? t('Edit Channel') : t('Create Channel')}
-                    <span className='text-muted-foreground ml-2 text-sm font-normal'>
-                      {t(currentTypeLabel)}
-                    </span>
-                  </span>
-                </SheetTitle>
-                <SheetDescription className='mt-1'>
-                  {isEditing
-                    ? t(
-                        "Update channel configuration and click save when you're done."
-                      )
-                    : t(
-                        'Add a new channel by providing the necessary information.'
-                      )}
-                </SheetDescription>
+                {isInline ? (
+                  <>
+                    <h2 className='flex items-center gap-3 text-base font-medium'>
+                      <IconBadge tone='info' size='title'>
+                        <ChannelTypeLogo type={currentType} size={22} />
+                      </IconBadge>
+                      <span>
+                        {isEditing ? t('Edit Channel') : t('Create Channel')}
+                        <span className='text-muted-foreground ml-2 text-sm font-normal'>
+                          {t(currentTypeLabel)}
+                        </span>
+                      </span>
+                    </h2>
+                    <p className='text-muted-foreground mt-1 text-sm'>
+                      {isEditing
+                        ? t(
+                            "Update channel configuration and click save when you're done."
+                          )
+                        : t(
+                            'Add a new channel by providing the necessary information.'
+                          )}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <SheetTitle className='flex items-center gap-3'>
+                      <IconBadge tone='info' size='title'>
+                        <ChannelTypeLogo type={currentType} size={22} />
+                      </IconBadge>
+                      <span>
+                        {isEditing ? t('Edit Channel') : t('Create Channel')}
+                        <span className='text-muted-foreground ml-2 text-sm font-normal'>
+                          {t(currentTypeLabel)}
+                        </span>
+                      </span>
+                    </SheetTitle>
+                    <SheetDescription className='mt-1'>
+                      {isEditing
+                        ? t(
+                            "Update channel configuration and click save when you're done."
+                          )
+                        : t(
+                            'Add a new channel by providing the necessary information.'
+                          )}
+                    </SheetDescription>
+                  </>
+                )}
               </div>
               {!isEditing && (
                 <Button
@@ -1940,7 +1993,7 @@ export function ChannelMutateDrawer({
 
           <Form {...form}>
             <form
-              id='channel-form'
+              id={editorFormId}
               ref={channelFormRef}
               onSubmit={form.handleSubmit(onSubmit, onInvalid)}
               className={sideDrawerFormClassName('gap-5')}
@@ -4792,12 +4845,23 @@ export function ChannelMutateDrawer({
           </Form>
 
           <SheetFooter className={sideDrawerFooterClassName()}>
-            <SheetClose
-              render={<Button variant='outline' disabled={isSubmitting} />}
-            >
-              {t('Cancel')}
-            </SheetClose>
-            <Button form='channel-form' type='submit' disabled={isSubmitting}>
+            {isInline ? (
+              <Button
+                type='button'
+                variant='outline'
+                disabled={isSubmitting}
+                onClick={() => handleOpenChange(false)}
+              >
+                {t('Cancel')}
+              </Button>
+            ) : (
+              <SheetClose
+                render={<Button variant='outline' disabled={isSubmitting} />}
+              >
+                {t('Cancel')}
+              </SheetClose>
+            )}
+            <Button form={editorFormId} type='submit' disabled={isSubmitting}>
               {isSubmitting && (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               )}
