@@ -29,24 +29,6 @@
 ├── GITHUB_ISSUE_PR.md         # Issue/PR 创建指南（含关联机制）
 ├── PR_DEV_WORKFLOW.md         # PR 开发工作流指南（含 CRG + ocr 审查流程）
 └── WORKFLOW.md                # 工作隔离规范（.wt/ worktree 分支目录）
-
-Rust 实现（不在 .githooks/ 内，随 omenic 仓库构建与部署）：
-├── bin/gate/                  # gate CLI（clap）：init/pre-commit/pre-push/merge/review/audit/issue/pr
-├── crates/gate-core/          # 核心逻辑：
-│   ├── tools/gh_wrap.rs      # gh 拦截门（argv[0]==gh 时拦截 issue/pr 命令，其余透传真实 gh）
-│   │                         #   GT-01/03 issue create、GT-02 pr create、GT-04/04b/06 issue close、
-│   │                         #   GT-05/07 pr merge（含 squash 标题 CM-01/CM-02）
-│   ├── tools/merge.rs        # RV-07（CRG + ocr 强审）+ PR/review/cleanup topic 调度
-│   ├── tools/review.rs       # CRG + ocr 运行与 PR 留言（--post/--post-inline）
-│   ├── tools/audit.rs        # issue/PR 批量合规扫描（--recent/--limit/--workers）
-│   ├── tools/pre_commit.rs   # CM-01/02/03 + 调用 workspace/code validator
-│   ├── rules/issues.rs       # IS-01 ~ IS-16（纯 Rust 实现）
-│   ├── rules/pull_requests.rs# PR-01 ~ PR-12（纯 Rust 实现）
-│   └── rules/reviews.rs      # RV-01 ~ RV-06（纯 Rust 实现）
-├── Cargo.toml                 # release profile：opt-level=z + lto=fat + codegen-units=1 + strip
-│                             # 构建后 upx --best --lzma 压缩（~2.8MB → ~660KB）
-└── ~/.local/bin/gate          # 安装目标（gate init / install 部署，同二进制复制为 gh）
-└── ~/.local/bin/gh            # 拦截器（argv[0]==gh 走 gh_wrap::dispatch，其余透传真实 gh）
 ```
 
 ### 外部工具依赖
