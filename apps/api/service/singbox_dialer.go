@@ -315,16 +315,17 @@ func outboundFingerprint() (string, json.RawMessage) {
 	if err := model.DB.Where("key = ?", "proxy_config").First(&opt).Error; err != nil {
 		return "", nil
 	}
-	// Extract the outbound field as raw JSON directly from the persisted
-	// Option value. The controller stores transport headers under
-	// "transport.headers"; round-tripping through the service's OutboundConfig
-	// struct would drop them (it only models a flat Host), silently losing
-	// WebSocket/gRPC transport settings when the dialer rebuilds.
+	// Decrypt if encrypted; fall back to raw for backward compatibility
+	// (legacy plaintext stored before #141 introduced encryption).
+	raw := opt.Value
+	if plain, err := common.DecryptAESGCM(raw, "proxy-config"); err == nil {
+		raw = plain
+	}
 	var cfg struct {
 		Enabled  bool            `json:"enabled"`
 		Outbound json.RawMessage `json:"outbound"`
 	}
-	if err := common.Unmarshal([]byte(opt.Value), &cfg); err != nil {
+	if err := common.Unmarshal([]byte(raw), &cfg); err != nil {
 		return "", nil
 	}
 	if !cfg.Enabled {

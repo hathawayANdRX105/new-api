@@ -102,6 +102,25 @@ func TestOutboundFingerprintInvalidJSONReturnsEmpty(t *testing.T) {
 	assert.Empty(t, fp, "fingerprint should be empty for invalid JSON")
 	assert.Nil(t, raw, "raw should be nil for invalid JSON")
 }
+func TestOutboundFingerprintEncryptedValueReturnsNonEmpty(t *testing.T) {
+	previousDB := model.DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	// Simulate the encrypted storage path: SaveProxyConfigJSON encrypts with AESGCM key "proxy-config".
+	plaintext := `{"enabled": true, "outbound": {"type": "socks5", "server": "127.0.0.1", "server_port": 1080}}`
+	encrypted, err := common.EncryptAESGCM(plaintext, "proxy-config")
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Option{Key: "proxy_config", Value: encrypted}).Error)
+
+	fp, raw := outboundFingerprint()
+	assert.NotEmpty(t, fp, "fingerprint should be non-empty for encrypted value")
+	assert.NotNil(t, raw, "raw should be non-nil for encrypted value")
+	assert.JSONEq(t, `{"type":"socks5","server":"127.0.0.1","server_port":1080}`, string(raw))
+}
 
 func TestBuildOptionsJSONSSH(t *testing.T) {
 	t.Run("password auth", func(t *testing.T) {
