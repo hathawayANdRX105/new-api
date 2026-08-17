@@ -1,9 +1,14 @@
 # Frontend Development - Backend built from local source
 #
-# Usage:
-#   1. docker compose -f docker-compose.dev.yml up -d
-#   2. just dev-web
-#   3. Open http://localhost:5173 (Rsbuild dev server, API auto-proxied to :3000)
+# Usage (worktree dev — recommended):
+#   1. just dev-db          # start only postgres + redis (no API container)
+#   2. just dev-wt           # build Go binary from worktree + web HMR
+#   3. Open http://localhost:5173 (Rsbuild HMR, API auto-proxied to :3000)
+#
+# Usage (legacy Docker API):
+#   1. just dev-api          # start all containers including API
+#   2. just dev-web           # web HMR
+#   3. Open http://localhost:5173
 #
 # Rebuild backend after Go code changes:
 #   docker compose -f docker-compose.dev.yml up -d --build new-api
@@ -48,6 +53,8 @@ services:
     image: redis:7-alpine
     container_name: new-api-dev-redis
     restart: unless-stopped
+    ports:
+      - "6379:6379"
     networks:
       - dev-network
 
@@ -59,6 +66,8 @@ services:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: 123456
       POSTGRES_DB: new-api
+    ports:
+      - "5432:5432"
     volumes:
       - dev_pg_data:/var/lib/postgresql/data
     networks:

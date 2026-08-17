@@ -77,6 +77,31 @@ gitignored.
 - When a maintainer asks to start a dev server or backend process for manual testing, also create a test account on that instance and report its credentials in the reply, so the maintainer can sign in and verify the UI immediately.
 - Test accounts MUST be super-admin (`RoleRootUser`, role 100) unless the maintainer specifies a lower role.
 
+### Worktree Development Workflow
+
+When working in a `.wt/` git worktree (the standard branch workspace), agents MUST follow these rules:
+
+**Starting a dev server:**
+- MUST use `just dev-wt` — NOT `just dev`, `just start-api`, or `just dev-api`. Those start the Docker API container or `go run` from the main checkout, not the worktree branch.
+- `just dev-wt` does three things in the correct order:
+  1. `just dev-db` — starts only the PostgreSQL container (Redis is expected on `localhost:6379`; a host Redis or `uf-local-redis` container already provides this)
+  2. Builds and runs the Go API binary from the current worktree's `apps/api/` (branch-scoped binary in `~/.cache/new-api-bin/new-api-<branch>`)
+  3. Starts the Rsbuild web HMR dev server from the current worktree's `apps/web/` (port 5173, auto-proxies `/api` → `:3000`)
+- The web HMR dev server means **frontend changes hot-reload instantly** — no rebuild needed. Only Go changes require killing and restarting `just dev-wt`.
+
+**Why not `just dev` or `just start-api`:**
+- `just dev` starts the Docker API container (`new-api-dev`) which builds from the **main checkout** Docker context, ignoring worktree branch code.
+- `just start-api` runs `go run main.go` in the foreground with no process management, no DB config, and no web server.
+- Both skip the Rsbuild HMR dev server, forcing a full `just build-web` (bun install + rspack production build + copy to embed dir + Go rebuild) for every UI change.
+
+**Port allocation:**
+- API always listens on `:3000`. Web HMR on `:5173` (override with `DEV_WEB_PORT=xxxx just dev-wt`).
+- Only one worktree dev server can run at a time per port. To run multiple worktrees simultaneously, set `DEV_WEB_PORT` for the second one.
+
+**When to use `just build-web` instead:**
+- Only when you need a production-accurate embedded frontend (e.g., testing `go:embed` behavior, Docker builds, release verification).
+- For day-to-day UI development and API testing, `just dev-wt` is always faster.
+
 ### Common Code Quality
 
 - New code should stay direct and readable. Prefer early returns, clear branches, and well-named local variables to deep nesting or layered control flow.
