@@ -34,6 +34,12 @@ export const STATIC_I18N_KEYS = [
   'Channel health checks',
   'Request retry',
 
+  'Karmada Dashboard',
+  'Karmada Dashboard is not configured',
+  'Unable to open Karmada Dashboard',
+  'Your root session could not be verified for Karmada access.',
+  'Deploy the Karmada Dashboard and set VITE_KARMADA_DASHBOARD_URL to its address before using this page.',
+
   // System settings sidebar
   'System Administration',
   'General',

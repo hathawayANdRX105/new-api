@@ -1,0 +1,192 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: karmada-dashboard
+  namespace: karmada-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: karmada-dashboard-config
+  namespace: karmada-system
+data:
+  dashboard-config.yaml: |
+    path_prefix: /karmada-dashboard
+    docker_registries: []
+    chart_registries: []
+    menu_configs:
+      - path: /overview
+        enable: true
+        sidebar_key: OVERVIEW
+      - path: /topology
+        enable: true
+        sidebar_key: TOPOLOGY
+      - path: /multicloud-resource-manage
+        enable: true
+        sidebar_key: MULTICLOUD-RESOURCE-MANAGE
+      - path: /multicloud-policy-manage
+        enable: true
+        sidebar_key: MULTICLOUD-POLICY-MANAGE
+      - path: /cluster-manage
+        enable: true
+        sidebar_key: CLUSTER-MANAGE
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: karmada-dashboard-api
+  namespace: karmada-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: karmada-dashboard-api
+  template:
+    metadata:
+      labels:
+        app: karmada-dashboard-api
+    spec:
+      serviceAccountName: karmada-dashboard
+      containers:
+        - name: karmada-dashboard-api
+          image: karmada/karmada-dashboard-api:local
+          imagePullPolicy: Never
+          command: ["/bin/karmada-dashboard-api"]
+          args:
+            - --karmada-kubeconfig=/etc/karmada/karmada.config
+            - --karmada-context=karmada-admin
+            - --kubeconfig=/etc/karmada/karmada.config
+            - --context=karmada-admin
+            - --insecure-bind-address=0.0.0.0
+          ports:
+            - containerPort: 8000
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - name: karmada-config
+              mountPath: /etc/karmada/karmada.config
+              subPath: karmada.config
+      volumes:
+        - name: karmada-config
+          secret:
+            secretName: karmada-dashboard-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: karmada-dashboard-api
+  namespace: karmada-system
+spec:
+  selector:
+    app: karmada-dashboard-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubernetes-dashboard-api
+  namespace: karmada-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubernetes-dashboard-api
+  template:
+    metadata:
+      labels:
+        app: kubernetes-dashboard-api
+    spec:
+      serviceAccountName: karmada-dashboard
+      containers:
+        - name: kubernetes-dashboard-api
+          image: karmada/kubernetes-dashboard-api:local
+          imagePullPolicy: Never
+          command: ["/bin/kubernetes-dashboard-api"]
+          args:
+            - --karmada-kubeconfig=/etc/karmada/karmada.config
+            - --karmada-context=karmada-admin
+            - --insecure-bind-address=0.0.0.0
+            - --metrics-provider=none
+          ports:
+            - containerPort: 8000
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - name: karmada-config
+              mountPath: /etc/karmada/karmada.config
+              subPath: karmada.config
+      volumes:
+        - name: karmada-config
+          secret:
+            secretName: karmada-dashboard-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubernetes-dashboard-api
+  namespace: karmada-system
+spec:
+  selector:
+    app: kubernetes-dashboard-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: karmada-dashboard-web
+  namespace: karmada-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: karmada-dashboard-web
+  template:
+    metadata:
+      labels:
+        app: karmada-dashboard-web
+    spec:
+      containers:
+        - name: karmada-dashboard-web
+          image: karmada/karmada-dashboard-web:local
+          imagePullPolicy: Never
+          command: ["/bin/karmada-dashboard-web"]
+          args:
+            - --static-dir=/static
+            - --insecure-bind-address=0.0.0.0
+            - --dashboard-config-path=/config/dashboard-config.yaml
+            - --api-proxy-endpoint=http://karmada-dashboard-api.karmada-system.svc.cluster.local:8000
+            - --kubernetes-dashboard-api-proxy-endpoint=http://kubernetes-dashboard-api.karmada-system.svc.cluster.local:8000
+            - --enable-metrics-scraper-proxy=false
+          ports:
+            - containerPort: 8000
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 384Mi }
+          volumeMounts:
+            - name: dashboard-config
+              mountPath: /config/dashboard-config.yaml
+              subPath: dashboard-config.yaml
+      volumes:
+        - name: dashboard-config
+          configMap:
+            name: karmada-dashboard-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: karmada-dashboard-web
+  namespace: karmada-system
+spec:
+  selector:
+    app: karmada-dashboard-web
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 32000
+  type: NodePort

@@ -16,8 +16,12 @@ export default defineConfig(({ envMode }) => {
     'http://localhost:3000'
 
   const isProd = envMode === 'production'
+  const karmadaDashboardUrl =
+    process.env.VITE_KARMADA_DASHBOARD_URL ||
+    env.rawPublicVars.VITE_KARMADA_DASHBOARD_URL ||
+    ''
   const devProxy = Object.fromEntries(
-    (['/api', '/mj', '/pg'] as const).map((key) => [
+    (['/api', '/mj', '/pg', '/karmada-dashboard'] as const).map((key) => [
       key,
       { target: serverUrl, changeOrigin: true },
     ])
@@ -55,6 +59,11 @@ export default defineConfig(({ envMode }) => {
     source: {
       entry: {
         index: './src/main.tsx',
+      },
+      define: {
+        'import.meta.env.VITE_KARMADA_DASHBOARD_URL': JSON.stringify(
+          karmadaDashboardUrl
+        ),
       },
     },
     resolve: {

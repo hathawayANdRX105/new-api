@@ -1,0 +1,70 @@
+diff --git a/ui/apps/dashboard/src/components/auth/index.tsx b/ui/apps/dashboard/src/components/auth/index.tsx
+index cbdc9b6..ca8b38e 100644
+--- a/ui/apps/dashboard/src/components/auth/index.tsx
++++ b/ui/apps/dashboard/src/components/auth/index.tsx
+@@ -27,6 +27,7 @@ import { karmadaClient } from '@/services';
+ import { useQuery } from '@tanstack/react-query';
+ import { karmadaMemberClusterClient } from "@/services/base.ts";
+ import { metricsScraperClient } from "@/services/metrics.ts";
++import { isEmbeddedSessionMode } from '@/components/parent-integration';
+ 
+ export interface AuthUser {
+   name?: string;
+@@ -50,38 +51,37 @@ const AuthContext = createContext<{
+ });
+ 
+ const AuthProvider = ({ children }: { children: ReactNode }) => {
+-  const [token, setToken_] = useState(localStorage.getItem('token') || '');
++  const [token, setToken_] = useState(
++    isEmbeddedSessionMode ? '__session__' : localStorage.getItem('token') || '',
++  );
+   const setToken = useCallback((newToken: string) => {
++    if (isEmbeddedSessionMode) return;
+     localStorage.setItem('token', newToken);
+     setToken_(newToken);
+   }, []);
+   const logout = useCallback(() => {
+-    localStorage.removeItem('token');
+-    sessionStorage.removeItem('oidc_state');
++    if (!isEmbeddedSessionMode) {
++      localStorage.removeItem('token');
++      sessionStorage.removeItem('oidc_state');
++    }
+     delete karmadaClient.defaults.headers.common['Authorization'];
+     delete karmadaMemberClusterClient.defaults.headers.common['Authorization'];
+-    setToken_('');
++    delete metricsScraperClient.defaults.headers.common['Authorization'];
++    setToken_(isEmbeddedSessionMode ? '__session__' : '');
+   }, []);
+   const { data, isLoading } = useQuery({
+     queryKey: ['Me', token],
+     queryFn: async () => {
+-      if (token) {
+-        karmadaClient.defaults.headers.common[
+-          'Authorization'
+-        ] = `Bearer ${token}`;
+-        karmadaMemberClusterClient.defaults.headers.common[
+-          'Authorization'
+-        ] = `Bearer ${token}`;
+-        metricsScraperClient.defaults.headers.common[
+-          'Authorization'
+-        ] = `Bearer ${token}`;
+-        const ret = await Me();
+-        return ret.data as MeResponse;
+-      } else {
+-        return {
+-          authenticated: false,
+-        } as MeResponse;
++      if (!token) {
++        return { authenticated: false } as MeResponse;
++      }
++      if (!isEmbeddedSessionMode) {
++        karmadaClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
++        karmadaMemberClusterClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
++        metricsScraperClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
++      }
++      const ret = await Me();
++      return ret.data as MeResponse;
+     },
+   });
+   const ctxValue = useMemo(() => {

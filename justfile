@@ -112,6 +112,76 @@ dev-web:
 # Start both docker api and web dev servers (legacy: uses Docker API container)
 dev: dev-api dev-web
 
+# Deploy the official Karmada Dashboard against an existing Karmada host cluster.
+# Metrics are disabled to limit local resource use. The official web, Karmada API,
+# and member-cluster API remain separate single-replica workloads.
+KARMADA_CONTEXT := env_var_or_default("KARMADA_CONTEXT", "kind-karmada-host")
+KARMADA_NAMESPACE := env_var_or_default("KARMADA_NAMESPACE", "karmada-system")
+KARMADA_DASHBOARD_MANIFEST := "deploy/k8s/karmada-dashboard/local.yaml"
+KARMADA_DASHBOARD_RBAC := "deploy/k8s/karmada-dashboard/rbac.yaml"
+KARMADA_CONFIG_SECRET := env_var_or_default("KARMADA_CONFIG_SECRET", "karmada-controller-manager-config")
+KARMADA_API_SERVER := env_var("KARMADA_API_SERVER")
+KARMADA_DASHBOARD_NODE_URL := env_var_or_default("KARMADA_DASHBOARD_NODE_URL", "http://172.25.0.2:32000/karmada-dashboard/")
+
+karmada-dashboard-local:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    context="{{ KARMADA_CONTEXT }}"
+    namespace="{{ KARMADA_NAMESPACE }}"
+    tmp_config="$(mktemp)"
+    tmp_host_config="$(mktemp)"
+    trap 'rm -f "$tmp_config" "$tmp_host_config"' EXIT
+    kubectl --context "$context" get nodes >/dev/null
+    kubectl --context "$context" -n "$namespace" get secret "{{ KARMADA_CONFIG_SECRET }}" \
+        -o jsonpath='{.data.karmada\.config}' | base64 -d > "$tmp_config"
+    cp "$tmp_config" "$tmp_host_config"
+    sed -i "s#https://karmada-apiserver.karmada-system.svc.cluster.local:5443#{{ KARMADA_API_SERVER }}#" "$tmp_host_config"
+    kubectl --context "$context" -n "$namespace" create secret generic karmada-dashboard-config \
+        --from-file=karmada.config="$tmp_config" \
+        --dry-run=client -o yaml | kubectl --context "$context" apply -f -
+    KUBECONFIG="$tmp_host_config" kubectl --context karmada-admin apply -f "{{ KARMADA_DASHBOARD_RBAC }}"
+    kubectl --context "$context" apply -f "{{ KARMADA_DASHBOARD_MANIFEST }}"
+    kubectl --context "$context" -n "$namespace" rollout status deploy/karmada-dashboard-api --timeout=5m
+    kubectl --context "$context" -n "$namespace" rollout status deploy/kubernetes-dashboard-api --timeout=5m
+    kubectl --context "$context" -n "$namespace" rollout status deploy/karmada-dashboard-web --timeout=5m
+    kubectl --context "$context" -n "$namespace" get svc karmada-dashboard-web >/dev/null
+    dashboard_url="{{ KARMADA_DASHBOARD_NODE_URL }}"
+    curl --fail --silent --show-error "$dashboard_url" >/dev/null
+    echo "Karmada Dashboard NodePort: $dashboard_url"
+    echo "Start New API with KARMADA_DASHBOARD_URL=$dashboard_url and KARMADA_DASHBOARD_TOKEN set server-side."
+    just karmada-dashboard-status
+
+# Forward the official Dashboard web service for the New API iframe.
+karmada-dashboard-forward:
+    kubectl --context "{{ KARMADA_CONTEXT }}" -n "{{ KARMADA_NAMESPACE }}" port-forward service/karmada-dashboard-web 18000:8000
+
+# Print a short-lived Dashboard login token. Never put it in frontend configuration or URLs.
+karmada-dashboard-token:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp_config="$(mktemp)"
+    trap 'rm -f "$tmp_config"' EXIT
+    kubectl --context "{{ KARMADA_CONTEXT }}" -n "{{ KARMADA_NAMESPACE }}" get secret "{{ KARMADA_CONFIG_SECRET }}" \
+        -o jsonpath='{.data.karmada\.config}' | base64 -d > "$tmp_config"
+    sed -i "s#https://karmada-apiserver.karmada-system.svc.cluster.local:5443#{{ KARMADA_API_SERVER }}#" "$tmp_config"
+    KUBECONFIG="$tmp_config" kubectl --context karmada-admin -n "{{ KARMADA_NAMESPACE }}" get secret karmada-dashboard-token \
+        -o jsonpath='{.data.token}' | base64 -d
+
+karmada-dashboard-status:
+    kubectl --context "{{ KARMADA_CONTEXT }}" -n "{{ KARMADA_NAMESPACE }}" get pods,svc -l 'app in (karmada-dashboard-api,kubernetes-dashboard-api,karmada-dashboard-web)'
+
+karmada-dashboard-clean:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp_config="$(mktemp)"
+    trap 'rm -f "$tmp_config"' EXIT
+    kubectl --context "{{ KARMADA_CONTEXT }}" -n "{{ KARMADA_NAMESPACE }}" get secret "{{ KARMADA_CONFIG_SECRET }}" \
+        -o jsonpath='{.data.karmada\.config}' | base64 -d > "$tmp_config"
+    sed -i "s#https://karmada-apiserver.karmada-system.svc.cluster.local:5443#{{ KARMADA_API_SERVER }}#" "$tmp_config"
+    kubectl --context "{{ KARMADA_CONTEXT }}" delete -f "{{ KARMADA_DASHBOARD_MANIFEST }}" --ignore-not-found
+    kubectl --context "{{ KARMADA_CONTEXT }}" -n "{{ KARMADA_NAMESPACE }}" delete secret karmada-dashboard-config --ignore-not-found
+    KUBECONFIG="$tmp_config" kubectl --context karmada-admin delete -f "{{ KARMADA_DASHBOARD_RBAC }}" --ignore-not-found
+
 # Run Go tests (api + relaykit)
 test:
     #!/usr/bin/env bash

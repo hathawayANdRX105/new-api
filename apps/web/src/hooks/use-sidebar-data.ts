@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Activity,
   Box,
+  Boxes,
   CreditCard,
   FileText,
   FlaskConical,
@@ -166,6 +167,12 @@ export function useSidebarData(): SidebarData {
             title: t('Proxy Config'),
             url: '/proxy',
             icon: Network,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
+            title: t('Karmada Dashboard'),
+            url: '/karmada',
+            icon: Boxes,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {
