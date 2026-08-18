@@ -16,13 +16,24 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Main } from '@/components/layout'
 import { PageFooterProvider } from '@/components/layout/components/page-footer'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { hasPermission, ADMIN_PERMISSION_ACTIONS, ADMIN_PERMISSION_RESOURCES } from '@/lib/admin-permissions'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
+  hasPermission,
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+} from '@/lib/admin-permissions'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { ChannelCreateTab } from './components/channel-create-tab'
@@ -44,6 +55,11 @@ function ChannelsContent() {
     null
   )
 
+  const switchToCreateTab = () => {
+    setCurrentRow(null)
+    setPageTab('create')
+  }
+
   return (
     <>
       <PageFooterProvider container={footerContainer}>
@@ -58,9 +74,31 @@ function ChannelsContent() {
             className='flex h-full min-h-0 flex-col'
           >
             <div className='flex shrink-0 flex-col gap-2 px-3 pt-3 pb-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3 sm:gap-y-2 sm:px-4 sm:pt-5 sm:pb-3'>
-              <h2 className='truncate text-base font-bold tracking-tight sm:text-lg'>
-                {t('Channels')}
-              </h2>
+              <div className='flex items-center gap-2 sm:gap-3'>
+                <h2 className='truncate text-base font-bold tracking-tight sm:text-lg'>
+                  {t('Channels')}
+                </h2>
+                <Tooltip>
+                  <TooltipTrigger render={<span className='inline-flex' />}>
+                    <Button
+                      onClick={switchToCreateTab}
+                      size='sm'
+                      disabled={!canCreateChannel}
+                    >
+                      <Plus className='h-4 w-4' />
+                      <span className='max-sm:hidden'>
+                        {t('Create Channel')}
+                      </span>
+                      <span className='sm:hidden'>{t('Create')}</span>
+                    </Button>
+                  </TooltipTrigger>
+                  {!canCreateChannel && (
+                    <TooltipContent>
+                      {t('No permission to perform this action')}
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </div>
               <TabsList className='grid w-full grid-cols-2 bg-muted/60 p-1 sm:w-fit'>
                 <TabsTrigger
                   value='create'
