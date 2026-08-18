@@ -187,6 +187,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		ModelName:   relayInfo.OriginModelName,
 		RequestPath: c.Request.URL.Path,
 		Retry:       common.GetPointer(0),
+		ExcludeSet:  make(map[int]bool),
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
@@ -230,12 +231,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
+			model.GetChannelHealthManager().RecordOutcome(channel.Id, true)
 			return
 		}
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
+		if types.IsChannelError(newAPIError) {
+			model.GetChannelHealthManager().RecordOutcome(channel.Id, false)
+			if retryParam.ExcludeSet != nil && !retryParam.ExcludeSet[channel.Id] {
+				retryParam.ExcludeSet[channel.Id] = true
+			}
+		}
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
@@ -519,6 +527,7 @@ func RelayTask(c *gin.Context) {
 		ModelName:   relayInfo.OriginModelName,
 		RequestPath: c.Request.URL.Path,
 		Retry:       common.GetPointer(0),
+		ExcludeSet:  make(map[int]bool),
 	}
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
@@ -556,10 +565,15 @@ func RelayTask(c *gin.Context) {
 
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
 		if taskErr == nil {
+			model.GetChannelHealthManager().RecordOutcome(channel.Id, true)
 			break
 		}
 
 		if !taskErr.LocalError {
+			model.GetChannelHealthManager().RecordOutcome(channel.Id, false)
+			if retryParam.ExcludeSet != nil && !retryParam.ExcludeSet[channel.Id] {
+				retryParam.ExcludeSet[channel.Id] = true
+			}
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),

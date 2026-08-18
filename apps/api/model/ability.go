@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"math/rand"
 	"fmt"
 	"strings"
 	"sync"
@@ -105,7 +106,7 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 	return channelQuery, nil
 }
 
-func GetChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+func GetChannel(group string, model string, retry int, requestPath string, excludeSet map[int]bool) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
@@ -122,25 +123,40 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 		return nil, err
 	}
 	abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
-	channel := Channel{}
-	if len(abilities) > 0 {
-		// Randomly choose one
-		weightSum := uint(0)
-		for _, ability_ := range abilities {
-			weightSum += ability_.Weight + 10
-		}
-		// Randomly choose one
-		weight := common.GetRandomInt(int(weightSum))
-		for _, ability_ := range abilities {
-			weight -= int(ability_.Weight) + 10
-			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
-			if weight <= 0 {
-				channel.Id = ability_.ChannelId
-				break
+	// P1: filter out request-level excluded channels
+	if excludeSet != nil {
+		filtered := make([]Ability, 0, len(abilities))
+		for _, a := range abilities {
+			if !excludeSet[a.ChannelId] {
+				filtered = append(filtered, a)
 			}
 		}
-	} else {
+		abilities = filtered
+	}
+	if len(abilities) == 0 {
 		return nil, nil
+	}
+	// Weighted random with EWMA health adjustment
+	healthMgr := GetChannelHealthManager()
+	var weights []float64
+	var totalWeight float64
+	for _, ability_ := range abilities {
+		baseW := float64(ability_.Weight) + 10
+		effW := healthMgr.EffectiveWeight(ability_.ChannelId, uint(baseW))
+		weights = append(weights, effW)
+		totalWeight += effW
+	}
+	if totalWeight <= 0 {
+		return nil, nil
+	}
+	channel := Channel{}
+	randomWeight := rand.Float64() * totalWeight
+	for i, ability_ := range abilities {
+		randomWeight -= weights[i]
+		if randomWeight < 0 || i == len(abilities)-1 {
+			channel.Id = ability_.ChannelId
+			break
+		}
 	}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
