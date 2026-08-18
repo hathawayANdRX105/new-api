@@ -72,35 +72,72 @@ gitignored.
 
 ## Rules
 
-### Development Process
+### Development Workflow
 
-- When a maintainer asks to start a dev server or backend process for manual testing, also create a test account on that instance and report its credentials in the reply, so the maintainer can sign in and verify the UI immediately.
-- Test accounts MUST be super-admin (`RoleRootUser`, role 100) unless the maintainer specifies a lower role.
+#### Git remotes and upstream discipline
 
-### Worktree Development Workflow
+This repository's origin is **xiaocongyu66/new-api**.
 
-When working in a `.wt/` git worktree (the standard branch workspace), agents MUST follow these rules:
+- `origin` → `xiaocongyu66/new-api` — all pushes, PRs, and day-to-day work go here.
+- `fork` → `hathawayANdRX105/new-api` — personal fork mirror.
+- `upstream` → `QuantumNous/new-api` — original project, fetch-only reference. NEVER push here.
 
-**Starting a dev server:**
-- MUST use `just dev-wt` — NOT `just dev`, `just start-api`, or `just dev-api`. Those start the Docker API container or `go run` from the main checkout, not the worktree branch.
-- `just dev-wt` does three things in the correct order:
-  1. `just dev-db` — starts only the PostgreSQL container (Redis is expected on `localhost:6379`; a host Redis or `uf-local-redis` container already provides this)
-  2. Builds and runs the Go API binary from the current worktree's `apps/api/` (branch-scoped binary in `~/.cache/new-api-bin/new-api-<branch>`)
-  3. Starts the Rsbuild web HMR dev server from the current worktree's `apps/web/` (port 5173, auto-proxies `/api` → `:3000`)
-- The web HMR dev server means **frontend changes hot-reload instantly** — no rebuild needed. Only Go changes require killing and restarting `just dev-wt`.
+**NEVER** treat QuantumNous/new-api as the project's upstream for development purposes. Do not:
+- Push to `upstream` or any QuantumNous-owned remote.
+- Create PRs targeting QuantumNous/new-api.
+- Force-update, rebase onto, or merge from `upstream` without explicit maintainer confirmation.
+- Change the `origin` remote URL to point to QuantumNous/new-api or any non-xiaocongyu66 owner.
 
-**Why not `just dev` or `just start-api`:**
-- `just dev` starts the Docker API container (`new-api-dev`) which builds from the **main checkout** Docker context, ignoring worktree branch code.
-- `just start-api` runs `go run main.go` in the foreground with no process management, no DB config, and no web server.
-- Both skip the Rsbuild HMR dev server, forcing a full `just build-web` (bun install + rspack production build + copy to embed dir + Go rebuild) for every UI change.
+When in doubt about which remote to use: always `origin` (xiaocongyu66/new-api).
 
-**Port allocation:**
-- API always listens on `:3000`. Web HMR on `:5173` (override with `DEV_WEB_PORT=xxxx just dev-wt`).
-- Only one worktree dev server can run at a time per port. To run multiple worktrees simultaneously, set `DEV_WEB_PORT` for the second one.
+#### Creating a worktree
 
-**When to use `just build-web` instead:**
-- Only when you need a production-accurate embedded frontend (e.g., testing `go:embed` behavior, Docker builds, release verification).
-- For day-to-day UI development and API testing, `just dev-wt` is always faster.
+All feature work happens in `.wt/` worktrees, not the main checkout:
+
+```bash
+git worktree add .wt/<short-name> -b <branch-name> origin/main
+cd .wt/<short-name>
+```
+
+The main checkout stays on `main`; feature branches live in `.wt/`.
+
+#### Starting a dev server
+
+**`just dev-wt` (recommended for worktree development):**
+1. `just dev-db` — starts docker PostgreSQL only (Redis expected on `localhost:6379`; host Redis or `uf-local-redis` container already provides this)
+2. Builds and runs Go API binary from the current worktree's `apps/api/` (branch-scoped cache in `~/.cache/new-api-bin/new-api-<branch>`)
+3. Starts Rsbuild web HMR dev server on :5173 (auto-proxies `/api`, `/mj`, `/pg` → :3000)
+
+Frontend changes hot-reload instantly — no rebuild needed.
+Only Go changes require killing and restarting `just dev-wt`.
+
+**`just dev` (Docker API, single worktree):**
+- `just dev-api` starts docker postgres + redis + API container (:3000); container name `new-api-dev` is global, so only one worktree can use this at a time
+- Same Rsbuild HMR on :5173
+- Use only when API code doesn't differ from main (e.g. pure frontend work in the main checkout)
+
+**Quick UI-only verification (fastest):**
+If the API is already running on :3000 (docker or local binary):
+```bash
+just dev-web
+```
+Opens http://localhost:5173 with HMR. Frontend changes appear instantly, zero compilation.
+This is the fastest path for iterative UI development — use it whenever you only changed frontend code.
+
+#### Port allocation
+
+- API: `:3000` · Web HMR: `:5173` (override: `DEV_WEB_PORT=xxxx`)
+- PostgreSQL: `:5432` · Redis: `:6379`
+- Only one worktree dev server per port. Multiple worktrees: set `DEV_WEB_PORT` for the second.
+
+#### What NOT to use
+
+- `just start-api` — foreground `go run`, no DB config, no web server, no process management.
+- `just build-web` — full production build (bun install + rspack build + copy to embed dir + Go rebuild). Only for testing `go:embed` behavior, Docker builds, or release verification. Never use for iterative UI development.
+
+#### Test accounts
+
+When starting a dev server for manual testing, create a test account on the instance and report its credentials. Test accounts MUST be super-admin (`RoleRootUser`, role 100) unless the maintainer specifies a lower role.
 
 ### Common Code Quality
 
@@ -144,9 +181,8 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 **Relay and provider behavior:**
 
 - When implementing a new channel, confirm whether the provider supports `StreamOptions`; if supported, add the channel to `streamSupportedChannels`.
-- For request structs parsed from client JSON and re-marshaled to upstream providers, optional scalar fields MUST use pointer types with `omitempty` (for example, `*int`, `*uint`, `*float64`, `*bool`).
+- For request structs parsed from client JSON and re-marshaled to upstream providers, optional scalar fields MUST use pointer types with `omitempty` (for example, `*int`, `*uint`, `*float64`, `*bool`); non-pointer scalars with `omitempty` will silently drop zero values during marshal.
 - Preserve explicit zero values in upstream relay request DTOs: absent client JSON fields must become `nil` and be omitted, while explicit `0`, `0.0`, or `false` values must remain non-`nil` and be sent upstream.
-- Avoid non-pointer scalars with `omitempty` for optional request parameters, because zero values will be silently dropped during marshal.
 
 **Billing expression system:** When working on tiered/dynamic billing (expression-based pricing), MUST read `apps/api/pkg/billingexpr/expr.md` first. It documents the design philosophy, expression language, full architecture, token normalization rules, quota conversion, and expression versioning. All billing expression changes must follow that document.
 
