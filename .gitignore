@@ -39,6 +39,8 @@ todo/
 __pycache__/
 .pytest_cache/
 *.pyc
+**/__pycache__/
+**/*.pyc
 .wt/
 
 # Rust build artifacts
