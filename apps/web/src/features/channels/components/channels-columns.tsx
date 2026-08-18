@@ -27,7 +27,7 @@ import {
   Shuffle,
   SlidersHorizontal,
 } from 'lucide-react'
-import { useState, useMemo, useContext, useEffect } from 'react'
+import { memo, useState, useMemo, useContext, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -154,7 +154,11 @@ function UpstreamUpdateTags({ channel }: { channel: Channel }) {
 /**
  * Priority cell component with inline editing
  */
-function PriorityCell({ channel }: { channel: Channel }) {
+const PriorityCell = memo(function PriorityCell({
+  channel,
+}: {
+  channel: Channel
+}) {
   if (isTagAggregateRow(channel)) {
     return <TagPriorityCell channel={channel} />
   }
@@ -167,7 +171,7 @@ function PriorityCell({ channel }: { channel: Channel }) {
       min={-999}
     />
   )
-}
+})
 
 function TagPriorityCell({ channel }: { channel: TagRow }) {
   const { t } = useTranslation()
@@ -243,7 +247,11 @@ function ChannelFieldCell({
 /**
  * Weight cell component with inline editing
  */
-function WeightCell({ channel }: { channel: Channel }) {
+const WeightCell = memo(function WeightCell({
+  channel,
+}: {
+  channel: Channel
+}) {
   if (isTagAggregateRow(channel)) {
     return <TagWeightCell channel={channel} />
   }
@@ -256,7 +264,7 @@ function WeightCell({ channel }: { channel: Channel }) {
       min={0}
     />
   )
-}
+})
 
 function TagWeightCell({ channel }: { channel: TagRow }) {
   const { t } = useTranslation()
@@ -303,11 +311,14 @@ function TagWeightCell({ channel }: { channel: TagRow }) {
  */
 const MAX_INLINE_BALANCE_CHARS = 8
 const SENSITIVE_MASK = '••••'
-
 /**
  * Balance cell component with click to update
  */
-function BalanceCell({ channel }: { channel: Channel }) {
+const BalanceCell = memo(function BalanceCell({
+  channel,
+}: {
+  channel: Channel
+}) {
   const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
   const layout = useContext(ChannelRowActionsLayoutContext)
@@ -520,7 +531,7 @@ function BalanceCell({ channel }: { channel: Channel }) {
       />
     </TooltipProvider>
   )
-}
+})
 
 /**
  * Generate channels columns configuration

@@ -43,9 +43,9 @@ export default defineConfig(({ envMode }) => {
           priority: 0,
           enforce: true,
         },
-        'vendor-tanstack': {
-          test: /node_modules[\\/]@tanstack[\\/]/,
-          name: 'vendor-tanstack',
+        'vendor-chart': {
+          test: /node_modules[\\/](@visactor)[\\/]/,
+          name: 'vendor-chart',
           chunks: 'all',
           priority: 0,
           enforce: true,
@@ -84,7 +84,7 @@ export default defineConfig(({ envMode }) => {
     performance: {
       // Remove console in production
       removeConsole: isProd ? ['log'] : false,
-      buildCache: false,
+      buildCache: true,
     },
     tools: {
       rspack: {

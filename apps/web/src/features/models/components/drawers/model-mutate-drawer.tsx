@@ -237,6 +237,7 @@ export function ModelMutateDrawer({
   onOpenChange,
   currentRow,
 }: ModelMutateDrawerProps) {
+  if (!open) return null
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const currentModelId = currentRow?.id

@@ -82,6 +82,7 @@ export function RedemptionsMutateDrawer({
   onOpenChange,
   currentRow,
 }: RedemptionsMutateDrawerProps) {
+  if (!open) return null
   const { t } = useTranslation()
   const isUpdate = !!currentRow
   const redemptionId = currentRow?.id

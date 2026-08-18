@@ -100,6 +100,7 @@ export function ApiKeysMutateDrawer({
   onOpenChange,
   currentRow,
 }: ApiKeyMutateDrawerProps) {
+  if (!open) return null
   const { t } = useTranslation()
   const isUpdate = !!currentRow
   const currentRowId = currentRow?.id

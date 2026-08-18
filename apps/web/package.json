@@ -95,7 +95,8 @@
     "knip": "^6.24.0",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
-    "shadcn": "^4.12.0"
+    "shadcn": "^4.12.0",
+    "webpack-bundle-analyzer": "^5.3.1"
   },
   "overrides": {
     "brace-expansion": "2.1.1",

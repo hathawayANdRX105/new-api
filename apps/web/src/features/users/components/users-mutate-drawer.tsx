@@ -104,6 +104,7 @@ export function UsersMutateDrawer({
   onOpenChange,
   currentRow,
 }: UsersMutateDrawerProps) {
+  if (!open) return null
   const { t } = useTranslation()
   const isUpdate = !!currentRow
   const { triggerRefresh } = useUsers()

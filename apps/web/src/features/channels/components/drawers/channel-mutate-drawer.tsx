@@ -51,7 +51,7 @@ import {
   useCallback,
   useRef,
 } from 'react'
-import { type SubmitErrorHandler, useForm } from 'react-hook-form'
+import { type SubmitErrorHandler, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -615,6 +615,7 @@ export function ChannelMutateDrawer({
   presentation,
   formId,
 }: ChannelMutateDrawerProps) {
+  if (!open) return null
   const { t } = useTranslation()
   const isInline = presentation === 'inline'
   const isPresented = isInline || Boolean(open)
@@ -678,18 +679,21 @@ export function ChannelMutateDrawer({
   const { data: groupsData, isLoading: isLoadingGroups } = useQuery({
     queryKey: ['groups'],
     queryFn: getGroups,
+    enabled: isPresented,
   })
 
   // Fetch all available models
   const { data: allModelsData } = useQuery({
     queryKey: ['channel_models'],
     queryFn: getAllModels,
+    enabled: isPresented,
   })
 
   // Fetch prefill model groups
   const { data: prefillGroupsData } = useQuery({
     queryKey: ['prefill_groups', 'model'],
     queryFn: () => getPrefillGroups('model'),
+    enabled: isPresented,
   })
 
   const { copyToClipboard } = useCopyToClipboard()
@@ -705,14 +709,7 @@ export function ChannelMutateDrawer({
     switchMethod: switchVerificationMethod,
   } = useSecureVerification()
 
-  useEffect(() => {
-    if (!isPresented) {
-      setChannelKey(null)
-      setIsChannelKeyLoading(false)
-    } else if (channelId) {
-      setChannelKey(null)
-    }
-  }, [channelId, isPresented])
+
 
   // Check if this is a multi-key channel
   const isMultiKeyChannel =
@@ -733,66 +730,57 @@ export function ChannelMutateDrawer({
     setClipboardConnectionInfo(null)
   }, [form])
 
-  // Watch form values for conditional rendering
-  const multiKeyMode = form.watch('multi_key_mode')
-  const multiKeyType = form.watch('multi_key_type')
-  const keyMode = form.watch('key_mode')
-  const currentGroups = form.watch('group')
-  const currentType = form.watch('type')
-  const currentStatus = form.watch('status')
-  const currentBaseUrl = form.watch('base_url')
-  const currentKey = form.watch('key')
-  const currentOther = form.watch('other')
-  const currentModels = form.watch('models')
-  const currentName = form.watch('name')
-  const currentModelMapping = form.watch('model_mapping')
-  const awsKeyType = form.watch('aws_key_type')
-  const vertexKeyType = form.watch('vertex_key_type')
-  const upstreamModelUpdateCheckEnabled = form.watch(
-    'upstream_model_update_check_enabled'
-  )
-  const currentSettings = form.watch('settings')
-  const currentAdvancedCustom = form.watch('advanced_custom')
-  const currentPriority = form.watch('priority')
-  const currentWeight = form.watch('weight')
-  const currentTestModel = form.watch('test_model')
-  const currentAutoBan = form.watch('auto_ban')
-  const currentTag = form.watch('tag')
-  const currentRemark = form.watch('remark')
-  const currentStatusCodeMapping = form.watch('status_code_mapping')
-  const currentParamOverride = form.watch('param_override')
-  const currentHeaderOverride = form.watch('header_override')
-  const currentForceFormat = form.watch('force_format')
-  const currentThinkingToContent = form.watch('thinking_to_content')
-  const currentPassThroughBodyEnabled = form.watch('pass_through_body_enabled')
-  const currentDisableTaskPollingSleep = form.watch(
-    'disable_task_polling_sleep'
-  )
-  const currentProxy = form.watch('proxy')
-  const currentHttpProtocol = form.watch('http_protocol')
-  const currentHttp2ConnectionShards = form.watch('http2_connection_shards')
-  const currentSystemPrompt = form.watch('system_prompt')
-  const currentSystemPromptOverride = form.watch('system_prompt_override')
-  const currentAllowServiceTier = form.watch('allow_service_tier')
-  const currentDisableStore = form.watch('disable_store')
-  const currentAllowSafetyIdentifier = form.watch('allow_safety_identifier')
-  const currentAllowIncludeObfuscation = form.watch('allow_include_obfuscation')
-  const currentAllowInferenceGeo = form.watch('allow_inference_geo')
-  const currentAllowSpeed = form.watch('allow_speed')
-  const currentClaudeBetaQuery = form.watch('claude_beta_query')
-  const currentUpstreamModelUpdateAutoSyncEnabled = form.watch(
-    'upstream_model_update_auto_sync_enabled'
-  )
-  const currentUpstreamModelUpdateIgnoredModels = form.watch(
-    'upstream_model_update_ignored_models'
-  )
+  // Watch form values for conditional rendering (useWatch for precise per-field subscription)
+  const multiKeyMode = useWatch({ control: form.control, name: 'multi_key_mode' })
+  const multiKeyType = useWatch({ control: form.control, name: 'multi_key_type' })
+  const keyMode = useWatch({ control: form.control, name: 'key_mode' })
+  const currentGroups = useWatch({ control: form.control, name: 'group' })
+  const currentType = useWatch({ control: form.control, name: 'type' })
+  const currentStatus = useWatch({ control: form.control, name: 'status' })
+  const currentBaseUrl = useWatch({ control: form.control, name: 'base_url' })
+  const currentKey = useWatch({ control: form.control, name: 'key' })
+  const currentOther = useWatch({ control: form.control, name: 'other' })
+  const currentModels = useWatch({ control: form.control, name: 'models' })
+  const currentName = useWatch({ control: form.control, name: 'name' })
+  const currentModelMapping = useWatch({ control: form.control, name: 'model_mapping' })
+  const awsKeyType = useWatch({ control: form.control, name: 'aws_key_type' })
+  const vertexKeyType = useWatch({ control: form.control, name: 'vertex_key_type' })
+  const upstreamModelUpdateCheckEnabled = useWatch({ control: form.control, name: 'upstream_model_update_check_enabled' })
+  const currentSettings = useWatch({ control: form.control, name: 'settings' })
+  const currentAdvancedCustom = useWatch({ control: form.control, name: 'advanced_custom' })
+  const currentPriority = useWatch({ control: form.control, name: 'priority' })
+  const currentWeight = useWatch({ control: form.control, name: 'weight' })
+  const currentTestModel = useWatch({ control: form.control, name: 'test_model' })
+  const currentAutoBan = useWatch({ control: form.control, name: 'auto_ban' })
+  const currentTag = useWatch({ control: form.control, name: 'tag' })
+  const currentRemark = useWatch({ control: form.control, name: 'remark' })
+  const currentStatusCodeMapping = useWatch({ control: form.control, name: 'status_code_mapping' })
+  const currentParamOverride = useWatch({ control: form.control, name: 'param_override' })
+  const currentHeaderOverride = useWatch({ control: form.control, name: 'header_override' })
+  const currentForceFormat = useWatch({ control: form.control, name: 'force_format' })
+  const currentThinkingToContent = useWatch({ control: form.control, name: 'thinking_to_content' })
+  const currentPassThroughBodyEnabled = useWatch({ control: form.control, name: 'pass_through_body_enabled' })
+  const currentDisableTaskPollingSleep = useWatch({ control: form.control, name: 'disable_task_polling_sleep' })
+  const currentProxy = useWatch({ control: form.control, name: 'proxy' })
+  const currentHttpProtocol = useWatch({ control: form.control, name: 'http_protocol' })
+  const currentHttp2ConnectionShards = useWatch({ control: form.control, name: 'http2_connection_shards' })
+  const currentSystemPrompt = useWatch({ control: form.control, name: 'system_prompt' })
+  const currentSystemPromptOverride = useWatch({ control: form.control, name: 'system_prompt_override' })
+  const currentAllowServiceTier = useWatch({ control: form.control, name: 'allow_service_tier' })
+  const currentDisableStore = useWatch({ control: form.control, name: 'disable_store' })
+  const currentAllowSafetyIdentifier = useWatch({ control: form.control, name: 'allow_safety_identifier' })
+  const currentAllowIncludeObfuscation = useWatch({ control: form.control, name: 'allow_include_obfuscation' })
+  const currentAllowInferenceGeo = useWatch({ control: form.control, name: 'allow_inference_geo' })
+  const currentAllowSpeed = useWatch({ control: form.control, name: 'allow_speed' })
+  const currentClaudeBetaQuery = useWatch({ control: form.control, name: 'claude_beta_query' })
+  const currentUpstreamModelUpdateAutoSyncEnabled = useWatch({ control: form.control, name: 'upstream_model_update_auto_sync_enabled' })
+  const currentUpstreamModelUpdateIgnoredModels = useWatch({ control: form.control, name: 'upstream_model_update_ignored_models' })
   const shouldPreviewUnsavedModels =
     !isEditing ||
     (currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && canEditSensitive)
   const {
     unlocked: doubaoApiEditUnlocked,
     handleClick: handleApiConfigSecretClick,
-    reset: resetDoubaoApiUnlock,
   } = useHiddenClickUnlock({
     requiredClicks: 10,
     disabled: currentType !== 45 || sensitiveLocked,
@@ -801,11 +789,6 @@ export function ChannelMutateDrawer({
     },
   })
 
-  useEffect(() => {
-    if (!isPresented) {
-      resetDoubaoApiUnlock()
-    }
-  }, [isPresented, resetDoubaoApiUnlock])
 
   const applyConnectionInfo = useCallback(
     (connectionInfo: ChannelConnectionInfo) => {
@@ -4874,7 +4857,7 @@ export function ChannelMutateDrawer({
       {paramOverrideEditorOpen && !sensitiveLocked && (
         <ParamOverrideEditorDialog
           open={paramOverrideEditorOpen}
-          value={form.watch('param_override') || ''}
+          value={currentParamOverride || ''}
           onOpenChange={setParamOverrideEditorOpen}
           onSave={(nextValue) => {
             form.setValue('param_override', nextValue, {
@@ -4888,7 +4871,7 @@ export function ChannelMutateDrawer({
       {advancedCustomEditorOpen && !sensitiveLocked && (
         <AdvancedCustomEditorDialog
           open={advancedCustomEditorOpen}
-          value={form.watch('advanced_custom') || ''}
+          value={currentAdvancedCustom || ''}
           onOpenChange={setAdvancedCustomEditorOpen}
           onSave={(nextValue) => {
             form.setValue('advanced_custom', nextValue, {
