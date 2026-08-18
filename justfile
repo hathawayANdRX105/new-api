@@ -1,9 +1,9 @@
-WEB_DIR := "./apps/web"
-API_DIR := "./apps/api"
-API_EMBED_DIR := "./apps/api/web/dist"
+WEB_DIR := justfile_directory() + "/apps/web"
+API_DIR := justfile_directory() + "/apps/api"
+API_EMBED_DIR := justfile_directory() + "/apps/api/web/dist"
 GO_BIN_CACHE := env_var_or_default("GO_BIN_CACHE", env_var("HOME") + "/.cache/new-api-bin")
 DEV_WEB_PORT := env_var_or_default("DEV_WEB_PORT", "5173")
-DEV_COMPOSE_FILE := "deploy/docker-compose.dev.yml"
+DEV_COMPOSE_FILE := justfile_directory() + "/deploy/docker-compose.dev.yml"
 DEV_POSTGRES_SERVICE := "postgres"
 DEV_API_SERVICE := "new-api"
 DEV_POSTGRES_DB := "new-api"
@@ -117,15 +117,16 @@ dev: dev-api dev-web
 # and member-cluster API remain separate single-replica workloads.
 KARMADA_CONTEXT := env_var_or_default("KARMADA_CONTEXT", "kind-karmada-host")
 KARMADA_NAMESPACE := env_var_or_default("KARMADA_NAMESPACE", "karmada-system")
-KARMADA_DASHBOARD_MANIFEST := "deploy/k8s/karmada-dashboard/local.yaml"
-KARMADA_DASHBOARD_RBAC := "deploy/k8s/karmada-dashboard/rbac.yaml"
+KARMADA_DASHBOARD_MANIFEST := justfile_directory() + "/deploy/k8s/karmada-dashboard/local.yaml"
+KARMADA_DASHBOARD_RBAC := justfile_directory() + "/deploy/k8s/karmada-dashboard/rbac.yaml"
 KARMADA_CONFIG_SECRET := env_var_or_default("KARMADA_CONFIG_SECRET", "karmada-controller-manager-config")
-KARMADA_API_SERVER := env_var("KARMADA_API_SERVER")
+KARMADA_API_SERVER := env_var_or_default("KARMADA_API_SERVER", "")
 KARMADA_DASHBOARD_NODE_URL := env_var_or_default("KARMADA_DASHBOARD_NODE_URL", "http://172.25.0.2:32000/karmada-dashboard/")
 
 karmada-dashboard-local:
     #!/usr/bin/env bash
     set -euo pipefail
+    : "${KARMADA_API_SERVER:?KARMADA_API_SERVER is required (export it, e.g. KARMADA_API_SERVER=https://karmada-apiserver:5443)}"
     context="{{ KARMADA_CONTEXT }}"
     namespace="{{ KARMADA_NAMESPACE }}"
     tmp_config="$(mktemp)"
@@ -159,6 +160,7 @@ karmada-dashboard-forward:
 karmada-dashboard-token:
     #!/usr/bin/env bash
     set -euo pipefail
+    : "${KARMADA_API_SERVER:?KARMADA_API_SERVER is required (export it, e.g. KARMADA_API_SERVER=https://karmada-apiserver:5443)}"
     tmp_config="$(mktemp)"
     trap 'rm -f "$tmp_config"' EXIT
     kubectl --context "{{ KARMADA_CONTEXT }}" -n "{{ KARMADA_NAMESPACE }}" get secret "{{ KARMADA_CONFIG_SECRET }}" \
@@ -173,6 +175,7 @@ karmada-dashboard-status:
 karmada-dashboard-clean:
     #!/usr/bin/env bash
     set -euo pipefail
+    : "${KARMADA_API_SERVER:?KARMADA_API_SERVER is required (export it, e.g. KARMADA_API_SERVER=https://karmada-apiserver:5443)}"
     tmp_config="$(mktemp)"
     trap 'rm -f "$tmp_config"' EXIT
     kubectl --context "{{ KARMADA_CONTEXT }}" -n "{{ KARMADA_NAMESPACE }}" get secret "{{ KARMADA_CONFIG_SECRET }}" \
