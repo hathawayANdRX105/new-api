@@ -1,3 +1,7 @@
 #!/usr/bin/env bash
-# gate-managed hook — delegates to the gate binary
+# Disable Python bytecode cache generation globally for this hook and any
+# subprocess Python invocations (gate calls .githooks/*.py). Without this,
+# every gate run leaves __pycache__/*.pyc in the working tree, which then
+# shows up in PR diffs and causes needless churn.
+export PYTHONDONTWRITEBYTECODE=1
 exec "$(dirname "$0")/../gate" pre-commit
