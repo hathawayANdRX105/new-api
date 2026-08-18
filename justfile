@@ -45,23 +45,71 @@ run-api:
     cd "{{ API_DIR }}" && GOWORK=off go build -o "{{ GO_BIN_CACHE }}/$bin_name" .
     "{{ GO_BIN_CACHE }}/$bin_name"
 
-# Start docker dev api services (postgres, etc.)
-dev-api:
-    docker compose -f "{{ DEV_COMPOSE_FILE }}" up -d
+# Start only docker dev database (postgres). Redis is expected on localhost:6379
+# (either a host Redis or the docker dev redis — see dev-db-full if you need both in Docker).
+dev-db:
+    docker compose -f "{{ DEV_COMPOSE_FILE }}" up -d "{{ DEV_POSTGRES_SERVICE }}"
+
+# Start postgres + redis both in Docker (use if no host Redis is running on :6379)
+dev-db-full:
+    docker compose -f "{{ DEV_COMPOSE_FILE }}" up -d "{{ DEV_POSTGRES_SERVICE }}" redis
+
+# Start Go API binary locally (no Docker API container). Requires dev-db running.
+# Uses branch-scoped binary cache so multiple worktrees can coexist.
+start-wt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    branch="$(git branch --show-current 2>/dev/null || echo 'detached')"
+    bin_name="new-api-$(echo "$branch" | tr '/' '-')"
+    mkdir -p "{{ GO_BIN_CACHE }}"
+    echo "Building Go binary for branch: $branch..."
+    cd "{{ API_DIR }}" && GOWORK=off go build -o "{{ GO_BIN_CACHE }}/$bin_name" .
+    echo "Starting API: {{ GO_BIN_CACHE }}/$bin_name  (port 3000)"
+    SQL_DSN="postgresql://root:123456@localhost:5432/new-api" \
+    REDIS_CONN_STRING="redis://localhost:6379" \
+    SESSION_COOKIE_SECURE=false \
+    TZ=Asia/Shanghai \
+    "{{ GO_BIN_CACHE }}/$bin_name"
+
+# Full worktree dev: docker DBs + local Go API binary + web HMR (all background)
+# This is the recommended entry point for agent-driven UI/API development.
+dev-wt: dev-db
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Starting Go API binary in background..."
+    just start-wt &
+    API_PID=$!
+    sleep 1
+    echo "Starting web dev server (HMR)..."
+    just dev-web &
+    WEB_PID=$!
+    echo ""
+    echo "=== Worktree dev environment ready ==="
+    echo "  API:  http://localhost:3000"
+    echo "  Web:  http://localhost:{{ DEV_WEB_PORT }}"
+    echo "  (web HMR proxies /api to API)"
+    echo ""
+    echo "Press Ctrl+C to stop both."
+    trap 'kill $API_PID $WEB_PID 2>/dev/null' EXIT INT TERM
+    wait
 
 # Rebuild and restart docker dev api service
 dev-api-rebuild:
     docker compose -f "{{ DEV_COMPOSE_FILE }}" up -d --build "{{ DEV_API_SERVICE }}"
+ 
+# Start docker dev api services (postgres + redis + api container)
+dev-api:
+    docker compose -f "{{ DEV_COMPOSE_FILE }}" up -d
 
 # Start web frontend dev server
 dev-web:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Web frontend: http://localhost:{{ DEV_WEB_PORT }}"
-    cd "{{ WEB_DIR }}" && bun install
-    cd "{{ WEB_DIR }}" && bun run dev -- --host 0.0.0.0 --port "{{ DEV_WEB_PORT }}"
-
-# Start both api and web dev servers
+    (cd "{{ WEB_DIR }}" && bun install)
+    (cd "{{ WEB_DIR }}" && bun run dev -- --host 0.0.0.0 --port "{{ DEV_WEB_PORT }}")
+ 
+# Start both docker api and web dev servers (legacy: uses Docker API container)
 dev: dev-api dev-web
 
 # Run Go tests (api + relaykit)
