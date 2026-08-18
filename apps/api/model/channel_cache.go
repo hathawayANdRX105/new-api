@@ -1,7 +1,6 @@
 package model
 
 import (
-	"errors"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -111,10 +110,10 @@ func SyncChannelCache(frequency int) {
 	}
 }
 
-func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string, excludeSet map[int]bool) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, requestPath)
+		return GetChannel(group, model, retry, requestPath, excludeSet)
 	}
 
 	channelSyncLock.RLock()
@@ -159,13 +158,14 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 	targetPriority := int64(sortedUniquePriorities[retry])
 
-	// get the priority for the given retry number
-	var sumWeight = 0
+	// get the channels at the target priority level, excluding request-level excludes
 	var targetChannels []*Channel
 	for _, channelId := range channels {
+		if excludeSet != nil && excludeSet[channelId] {
+			continue // P1: skip channels that failed in this request
+		}
 		if channel, ok := channelsIDM[channelId]; ok {
 			if channel.GetPriority() == targetPriority {
-				sumWeight += channel.GetWeight()
 				targetChannels = append(targetChannels, channel)
 			}
 		} else {
@@ -174,38 +174,43 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 
 	if len(targetChannels) == 0 {
-		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
+		return nil, nil
 	}
 
-	// smoothing factor and adjustment
-	smoothingFactor := 1
-	smoothingAdjustment := 0
-
-	if sumWeight == 0 {
-		// when all channels have weight 0, set sumWeight to the number of channels and set smoothing adjustment to 100
-		// each channel's effective weight = 100
-		sumWeight = len(targetChannels) * 100
-		smoothingAdjustment = 100
-	} else if sumWeight/len(targetChannels) < 10 {
-		// when the average weight is less than 10, set smoothing factor to 100
-		smoothingFactor = 100
+	if len(targetChannels) == 1 {
+		return targetChannels[0], nil
 	}
 
-	// Calculate the total weight of all channels up to endIdx
-	totalWeight := sumWeight * smoothingFactor
+	// Weighted random selection with EWMA health adjustment.
+	// effectiveWeight = baseWeight * ewmaScore, with smoothing for low-weight channels.
+	healthMgr := GetChannelHealthManager()
+	var weights []float64
+	var totalWeight float64
+	for _, ch := range targetChannels {
+		baseW := float64(ch.GetWeight())
+		if baseW == 0 {
+			baseW = 100 // smoothing: weight=0 channels get equal share
+		} else if baseW < 10 {
+			baseW *= 100 // smoothing: amplify low-weight differences
+		}
+		effW := healthMgr.EffectiveWeight(ch.Id, uint(baseW))
+		weights = append(weights, effW)
+		totalWeight += effW
+	}
 
-	// Generate a random value in the range [0, totalWeight)
-	randomWeight := rand.Intn(totalWeight)
+	if totalWeight <= 0 {
+		return targetChannels[0], nil
+	}
 
-	// Find a channel based on its weight
-	for _, channel := range targetChannels {
-		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
+	randomWeight := rand.Float64() * totalWeight
+	for i, ch := range targetChannels {
+		randomWeight -= weights[i]
 		if randomWeight < 0 {
-			return channel, nil
+			return ch, nil
 		}
 	}
-	// return null if no channel is not found
-	return nil, errors.New("channel not found")
+
+	return targetChannels[len(targetChannels)-1], nil
 }
 
 // filterChannelsByRequestPathAndModel restricts candidates by request path and
