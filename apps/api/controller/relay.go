@@ -565,12 +565,11 @@ func RelayTask(c *gin.Context) {
 
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
 		if taskErr == nil {
+			model.GetChannelHealthManager().RecordOutcome(channel.Id, true)
 			break
 		}
 
-		if taskErr == nil {
-			model.GetChannelHealthManager().RecordOutcome(channel.Id, true)
-		} else if !taskErr.LocalError {
+		if !taskErr.LocalError {
 			model.GetChannelHealthManager().RecordOutcome(channel.Id, false)
 			if retryParam.ExcludeSet != nil && !retryParam.ExcludeSet[channel.Id] {
 				retryParam.ExcludeSet[channel.Id] = true
