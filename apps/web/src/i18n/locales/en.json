@@ -325,6 +325,7 @@
     "Allowed Origins": "Allowed Origins",
     "Allowed Ports": "Allowed Ports",
     "Already have an account?": "Already have an account?",
+    "Also controls request-level channel exclusion: a failed channel is skipped for the rest of the request only when retries remain. With 0, exclusion has no effect.": "Also controls request-level channel exclusion: a failed channel is skipped for the rest of the request only when retries remain. With 0, exclusion has no effect.",
     "Always matches (default tier).": "Always matches (default tier).",
     "Amount": "Amount",
     "Amount Due": "Amount Due",

@@ -325,6 +325,7 @@
     "Allowed Origins": "允許的 Origins",
     "Allowed Ports": "允許的端口",
     "Already have an account?": "已有用戶？",
+    "Also controls request-level channel exclusion: a failed channel is skipped for the rest of the request only when retries remain. With 0, exclusion has no effect.": "同時也控制請求級渠道排除：在本次請求中，失敗的頻道僅在剩餘重試次數時被跳過。重試次數為 0 時，排除無效。",
     "Always matches (default tier).": "始終匹配（預設檔位）。",
     "Amount": "金額",
     "Amount Due": "應付金額",

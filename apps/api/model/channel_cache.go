@@ -133,6 +133,12 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 
 	if len(channels) == 1 {
+		// The short circuit skips weighting (there is nothing to weigh against), but it
+		// MUST still honour request-level exclusion: returning a channel that already
+		// failed in this request would make every retry hit the same dead upstream.
+		if excludeSet != nil && excludeSet[channels[0]] {
+			return nil, nil
+		}
 		if channel, ok := channelsIDM[channels[0]]; ok {
 			return channel, nil
 		}
@@ -182,18 +188,12 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 
 	// Weighted random selection with EWMA health adjustment.
-	// effectiveWeight = baseWeight * ewmaScore, with smoothing for low-weight channels.
+	// effectiveWeight = routingBaseWeight(weight) * ewmaScore.
 	healthMgr := GetChannelHealthManager()
 	var weights []float64
 	var totalWeight float64
 	for _, ch := range targetChannels {
-		baseW := float64(ch.GetWeight())
-		if baseW == 0 {
-			baseW = 100 // smoothing: weight=0 channels get equal share
-		} else if baseW < 10 {
-			baseW *= 100 // smoothing: amplify low-weight differences
-		}
-		effW := healthMgr.EffectiveWeight(ch.Id, uint(baseW))
+		effW := healthMgr.EffectiveWeight(ch.Id, routingBaseWeight(ch.GetWeight()))
 		weights = append(weights, effW)
 		totalWeight += effW
 	}

@@ -8,8 +8,8 @@ package operation_setting
 type ChannelHealthSetting struct {
 	Enabled     bool    `json:"enabled"`
 	Alpha       float64 `json:"alpha"`        // EWMA smoothing factor (0-1), default 0.3
-	MinScore    float64 `json:"min_score"`     // Floor: minimum health score, default 0.05
-	MinRequests int     `json:"min_requests"`  // Min requests before EWMA is trusted, default 5
+	MinScore    float64 `json:"min_score"`    // Floor: minimum health score, default 0.05
+	MinRequests int     `json:"min_requests"` // Min requests before EWMA is trusted, default 5
 }
 
 // DefaultChannelHealthSetting returns the recommended defaults.
@@ -29,6 +29,18 @@ var channelHealthSetting = DefaultChannelHealthSetting()
 // GetChannelHealthSetting returns the current channel health setting.
 func GetChannelHealthSetting() *ChannelHealthSetting {
 	return channelHealthSetting
+}
+
+// healthStateResetHook is invoked when the kill switch transitions from enabled
+// to disabled, so accumulated per-channel health state is discarded instead of
+// being resurrected on re-enable. It is registered by the model package because
+// operation_setting must not import model: model already imports
+// operation_setting, and the reverse edge would create an import cycle.
+var healthStateResetHook func()
+
+// RegisterHealthStateResetHook wires the reset callback. Passing nil clears it.
+func RegisterHealthStateResetHook(hook func()) {
+	healthStateResetHook = hook
 }
 
 // SetChannelHealthSetting updates the channel health setting.
@@ -52,5 +64,11 @@ func SetChannelHealthSetting(cfg *ChannelHealthSetting) {
 	if cfg.MinRequests < 0 {
 		cfg.MinRequests = 0
 	}
+	// Capture the previous kill-switch state before swapping the pointer so the
+	// enabled -> disabled edge can be detected exactly once.
+	wasEnabled := channelHealthSetting != nil && channelHealthSetting.Enabled
 	channelHealthSetting = cfg
+	if wasEnabled && !cfg.Enabled && healthStateResetHook != nil {
+		healthStateResetHook()
+	}
 }

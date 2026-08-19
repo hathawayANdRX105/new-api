@@ -325,6 +325,7 @@
     "Allowed Origins": "許可するオリジン",
     "Allowed Ports": "許可するポート",
     "Already have an account?": "アカウントをお持ちの方？",
+    "Also controls request-level channel exclusion: a failed channel is skipped for the rest of the request only when retries remain. With 0, exclusion has no effect.": "リクエストレベルのチャンネル排除も制御します: リクエスト中に失敗したチャンネルは、残りのリトライがあればリクエスト全体でスキップされます。リトライ回数が0の場合、排除には影響しません。",
     "Always matches (default tier).": "常に一致（デフォルト ティア）。",
     "Amount": "金額",
     "Amount Due": "お支払い金額",

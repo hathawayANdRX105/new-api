@@ -325,6 +325,7 @@
     "Allowed Origins": "Origines autorisées",
     "Allowed Ports": "Ports autorisés",
     "Already have an account?": "Vous avez déjà un compte ?",
+    "Also controls request-level channel exclusion: a failed channel is skipped for the rest of the request only when retries remain. With 0, exclusion has no effect.": "Contrôle également le niveau de la requête d'exclusion de canal : un canal en échec est sauté pour le reste de la requête uniquement lorsqu'il reste des retries. Avec 0, l'exclusion n'a aucun effet.",
     "Always matches (default tier).": "Toujours appliqué (palier par défaut).",
     "Amount": "Montant",
     "Amount Due": "Montant dû",

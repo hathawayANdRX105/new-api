@@ -2,8 +2,8 @@ package model
 
 import (
 	"errors"
-	"math/rand"
 	"fmt"
+	"math/rand"
 	"strings"
 	"sync"
 
@@ -141,8 +141,7 @@ func GetChannel(group string, model string, retry int, requestPath string, exclu
 	var weights []float64
 	var totalWeight float64
 	for _, ability_ := range abilities {
-		baseW := float64(ability_.Weight) + 10
-		effW := healthMgr.EffectiveWeight(ability_.ChannelId, uint(baseW))
+		effW := healthMgr.EffectiveWeight(ability_.ChannelId, routingBaseWeight(int(ability_.Weight)))
 		weights = append(weights, effW)
 		totalWeight += effW
 	}

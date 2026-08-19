@@ -334,7 +334,14 @@ export function RoutingReliabilitySection({
                       />
                     </FormControl>
                     <FormDescription>
-                      {t('Number of times to retry failed requests (0-10)')}
+                      <span className='block'>
+                        {t('Number of times to retry failed requests (0-10)')}
+                      </span>
+                      <span className='block'>
+                        {t(
+                          'Also controls request-level channel exclusion: a failed channel is skipped for the rest of the request only when retries remain. With 0, exclusion has no effect.'
+                        )}
+                      </span>
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

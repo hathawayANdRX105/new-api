@@ -325,6 +325,7 @@
     "Allowed Origins": "Nguồn gốc được phép",
     "Allowed Ports": "Cổng được phép",
     "Already have an account?": "Đã có tài khoản?",
+    "Also controls request-level channel exclusion: a failed channel is skipped for the rest of the request only when retries remain. With 0, exclusion has no effect.": "Đồng thời kiểm soát loại trừ kênh trên cấp yêu cầu: một kênh thất bại sẽ bị bỏ qua trong suốt yêu cầu chỉ khi còn lượt thử lại. Với 0, loại trừ không có tác động.",
     "Always matches (default tier).": "Luôn khớp (bậc mặc định).",
     "Amount": "Số lượng",
     "Amount Due": "Số tiền cần thanh toán",

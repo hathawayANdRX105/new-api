@@ -325,6 +325,7 @@
     "Allowed Origins": "Разрешенные Origins",
     "Allowed Ports": "Разрешенные порты",
     "Already have an account?": "Уже есть аккаунт?",
+    "Also controls request-level channel exclusion: a failed channel is skipped for the rest of the request only when retries remain. With 0, exclusion has no effect.": "Также контролирует исключение на уровне запроса: канал, который потерпел неудачу в запросе, будет пропущен на остаток запроса, только если остались попытки повтора. При повторях равных 0, исключение не имеет эффекта.",
     "Always matches (default tier).": "Всегда совпадает (уровень по умолчанию).",
     "Amount": "Сумма",
     "Amount Due": "Сумма к оплате",
