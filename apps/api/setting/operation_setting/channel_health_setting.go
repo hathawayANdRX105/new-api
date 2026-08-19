@@ -1,5 +1,7 @@
 package operation_setting
 
+import "sync/atomic"
+
 // ChannelHealthSetting configures the EWMA-based channel health scoring.
 //
 // When Enabled is false, the system falls back to baseline behavior (pure
@@ -22,13 +24,18 @@ func DefaultChannelHealthSetting() *ChannelHealthSetting {
 	}
 }
 
-// channelHealthSetting holds the runtime config. It is read on every request,
-// so updates take effect immediately without restart.
-var channelHealthSetting = DefaultChannelHealthSetting()
+// channelHealthSetting holds the runtime config. It is read on every request from
+// handler goroutines while an admin may replace it at any time, so it is stored in
+// an atomic.Pointer: the struct is swapped wholesale rather than mutated in place.
+var channelHealthSetting atomic.Pointer[ChannelHealthSetting]
+
+func init() {
+	channelHealthSetting.Store(DefaultChannelHealthSetting())
+}
 
 // GetChannelHealthSetting returns the current channel health setting.
 func GetChannelHealthSetting() *ChannelHealthSetting {
-	return channelHealthSetting
+	return channelHealthSetting.Load()
 }
 
 // healthStateResetHook is invoked when the kill switch transitions from enabled
@@ -36,11 +43,18 @@ func GetChannelHealthSetting() *ChannelHealthSetting {
 // being resurrected on re-enable. It is registered by the model package because
 // operation_setting must not import model: model already imports
 // operation_setting, and the reverse edge would create an import cycle.
-var healthStateResetHook func()
+//
+// Stored atomically because SetChannelHealthSetting reads it from whichever
+// goroutine performs the toggle, while registration happens during package init.
+var healthStateResetHook atomic.Pointer[func()]
 
 // RegisterHealthStateResetHook wires the reset callback. Passing nil clears it.
 func RegisterHealthStateResetHook(hook func()) {
-	healthStateResetHook = hook
+	if hook == nil {
+		healthStateResetHook.Store(nil)
+		return
+	}
+	healthStateResetHook.Store(&hook)
 }
 
 // SetChannelHealthSetting updates the channel health setting.
@@ -64,11 +78,16 @@ func SetChannelHealthSetting(cfg *ChannelHealthSetting) {
 	if cfg.MinRequests < 0 {
 		cfg.MinRequests = 0
 	}
-	// Capture the previous kill-switch state before swapping the pointer so the
-	// enabled -> disabled edge can be detected exactly once.
-	wasEnabled := channelHealthSetting != nil && channelHealthSetting.Enabled
-	channelHealthSetting = cfg
-	if wasEnabled && !cfg.Enabled && healthStateResetHook != nil {
-		healthStateResetHook()
+	// Swap installs the new config and hands back the previous one, so the
+	// enabled -> disabled edge is derived from the exact pointer this call
+	// replaced. Reading the old value separately would let two concurrent
+	// toggles observe a predecessor they did not actually replace, firing or
+	// skipping the reset hook incorrectly.
+	previous := channelHealthSetting.Swap(cfg)
+	wasEnabled := previous != nil && previous.Enabled
+	if wasEnabled && !cfg.Enabled {
+		if hook := healthStateResetHook.Load(); hook != nil {
+			(*hook)()
+		}
 	}
 }
