@@ -105,22 +105,32 @@ const defaultScore = 1.0
 // the unlocked classifier. It does NOT respect the kill switch (ChannelHealthSetting.Enabled);
 // classification drives request-level exclusion, which should always operate.
 // Callers must not hold m.mu when calling this function.
+//
+// State is persisted only when the classifier actually needs to remember
+// something, i.e. when a 401 run is in progress. Persisting unconditionally would
+// leave a channel whose traffic is entirely OutcomeNeutral sitting at
+// requestCount 0 forever, and slowStartFactor would then read that as a channel
+// permanently stuck at the start of its warm-up ramp and derate it to
+// 1/MinRequests of its configured weight indefinitely.
 func ClassifyChannelOutcome(err *types.NewAPIError, channelID int) ChannelOutcome {
 	m := GetChannelHealthManager()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	state, ok := m.states[channelID]
-	if !ok {
-		state = &channelHealthState{
-			ewmaScore:       defaultScore,
-			requestCount:    0,
-			unauthorizedRun: 0,
-		}
+	state, tracked := m.states[channelID]
+	if !tracked {
+		state = &channelHealthState{ewmaScore: defaultScore}
+	}
+
+	outcome := classifyChannelOutcomeUnlocked(state, err)
+
+	// A live 401 run is the only classification state worth carrying between
+	// requests; everything else is derived fresh from the error each time.
+	if !tracked && state.unauthorizedRun > 0 {
 		m.states[channelID] = state
 	}
 
-	return classifyChannelOutcomeUnlocked(state, err)
+	return outcome
 }
 
 // classifyChannelOutcomeUnlocked classifies the error assuming the manager mutex
@@ -307,10 +317,21 @@ func (m *ChannelHealthManager) RecordOutcome(channelID int, success bool) {
 //
 // Callers must hold m.mu.
 func slowStartFactor(state *channelHealthState, minRequests int) float64 {
-	if minRequests <= 0 || state.rampExited || state.requestCount >= minRequests {
+	// requestCount == 0 means no scored outcome has been observed yet. Such an
+	// entry is indistinguishable from a channel with no entry at all (which
+	// EffectiveWeight short-circuits to full weight), so it must not be derated.
+	// State can exist at zero count because ClassifyChannelOutcome tracks 401
+	// runs, and a run that later clears leaves the entry behind.
+	//
+	// From the first observed outcome onward the factor is requestCount/minRequests:
+	// after one outcome a five-request window yields 1/5, and the window completes
+	// at requestCount == minRequests. Using the count already observed (rather than
+	// count+1) keeps the curve monotone across the zero-count boundary.
+	if minRequests <= 0 || state.rampExited || state.requestCount == 0 ||
+		state.requestCount >= minRequests {
 		return 1.0
 	}
-	return float64(state.requestCount+1) / float64(minRequests)
+	return float64(state.requestCount) / float64(minRequests)
 }
 
 // EffectiveWeight returns the routing weight for a channel, scaled by its EWMA

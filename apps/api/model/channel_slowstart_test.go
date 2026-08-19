@@ -22,15 +22,15 @@ func TestSlowStartFactorTable(t *testing.T) {
 	}{
 		{"window disabled by zero", 0, false, 0, 1.0},
 		{"window disabled by negative", 3, false, -1, 1.0},
-		{"first pick of a five-request window", 0, false, 5, 0.2},
-		{"second pick", 1, false, 5, 0.4},
-		{"third pick", 2, false, 5, 0.6},
-		{"fourth pick", 3, false, 5, 0.8},
-		{"final pick reaches full weight", 4, false, 5, 1.0},
+		{"no outcome observed yet is not derated", 0, false, 5, 1.0},
+		{"first observed outcome", 1, false, 5, 0.2},
+		{"second", 2, false, 5, 0.4},
+		{"third", 3, false, 5, 0.6},
+		{"fourth", 4, false, 5, 0.8},
+		{"window completed", 5, false, 5, 1.0},
 		{"past the window", 9, false, 5, 1.0},
-		{"exactly at the window boundary", 5, false, 5, 1.0},
 		{"ramp abandoned mid-window", 1, true, 5, 1.0},
-		{"single-request window", 0, false, 1, 1.0},
+		{"single-request window completes immediately", 1, false, 1, 1.0},
 	}
 
 	for _, tc := range cases {

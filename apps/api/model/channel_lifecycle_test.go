@@ -86,6 +86,11 @@ func TestKillSwitchResetHookFiresOnlyOnDisableEdge(t *testing.T) {
 // TestSlowStartRampsWeightLinearly pins the warm-up curve. Previously a channel
 // inside the MinRequests window competed at full weight, so a channel failing
 // every request still won its first MinRequests picks outright.
+//
+// The first pick is deliberately full weight: a channel with no observed outcome
+// is indistinguishable from one with no state at all, and EffectiveWeight
+// short-circuits that case (three pre-existing tests assert it). The ramp
+// therefore governs picks 2..MinRequests, scaling by requestCount/MinRequests.
 func TestSlowStartRampsWeightLinearly(t *testing.T) {
 	mgr := resetHealthManager()
 	setTestConfig(true, 0.3, 0.05, 5)
@@ -93,15 +98,11 @@ func TestSlowStartRampsWeightLinearly(t *testing.T) {
 	const channelID = 8202
 	const baseWeight = 10
 
-	// Create state without recording an outcome, so requestCount starts at 0.
-	// EffectiveWeight short-circuits for channels it has never seen at all.
-	mgr.RecordChannelOutcome(channelID, OutcomeNeutral)
-
-	expected := []float64{2, 4, 6, 8, 10, 10}
+	expected := []float64{10, 2, 4, 6, 8, 10, 10}
 	for i, want := range expected {
 		got := mgr.EffectiveWeight(channelID, baseWeight)
 		assert.InDelta(t, want, got, 1e-9,
-			"pick %d: weight ramps as (requestCount+1)/MinRequests", i+1)
+			"pick %d: ramp scales by observed requestCount/MinRequests", i+1)
 		mgr.RecordChannelOutcome(channelID, OutcomeSuccess)
 	}
 }
@@ -165,7 +166,9 @@ func TestSlowStartIgnoredWhenKillSwitchOff(t *testing.T) {
 	setTestConfig(true, 0.3, 0.05, 5)
 
 	const channelID = 8207
-	mgr.RecordChannelOutcome(channelID, OutcomeNeutral)
+	// Seed with a scored outcome: OutcomeNeutral deliberately leaves requestCount
+	// at zero, which the ramp treats as "not yet observed" and does not derate.
+	mgr.RecordChannelOutcome(channelID, OutcomeSuccess)
 	require.InDelta(t, 2.0, mgr.EffectiveWeight(channelID, 10), 1e-9, "ramp applies while enabled")
 
 	setTestConfig(false, 0.3, 0.05, 5)
@@ -184,7 +187,7 @@ func TestSlowStartRampSurvivesReset(t *testing.T) {
 	require.InDelta(t, 10.0, mgr.EffectiveWeight(channelID, 10), 1e-9, "ramp exited")
 
 	mgr.Reset()
-	mgr.RecordChannelOutcome(channelID, OutcomeNeutral)
+	mgr.RecordChannelOutcome(channelID, OutcomeSuccess)
 
 	assert.InDelta(t, 2.0, mgr.EffectiveWeight(channelID, 10), 1e-9,
 		"after Reset the channel warms up from the start again")

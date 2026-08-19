@@ -249,6 +249,13 @@ func TestRecordChannelOutcome_NeutralIsInert(t *testing.T) {
 	}
 	require.Equal(t, 1.0, mgr.GetScore(channelID), "neutral outcomes never move the score")
 
+	// Asserting the score alone is not enough: routing consumes EffectiveWeight,
+	// and an earlier revision left a neutral-only channel pinned at the start of
+	// its warm-up ramp, derating it to 1/MinRequests of its configured weight
+	// indefinitely while the score still read 1.0.
+	assert.InDelta(t, 10.0, mgr.EffectiveWeight(channelID, 10), 1e-9,
+		"a channel whose only failures are caller-side must keep its full routing weight")
+
 	// requestCount must also be untouched, otherwise 500 neutral results would have
 	// silently burned through the MinRequests guard. Five fatal results still sit
 	// inside the guard, so the score stays at full health; the sixth moves it.
