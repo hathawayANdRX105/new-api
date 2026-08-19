@@ -20,17 +20,41 @@ import { useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
 import LoadingBar, { type LoadingBarRef } from 'react-top-loading-bar'
 
+import {
+  createPendingProgressScheduler,
+  type PendingProgressScheduler,
+} from './navigation-progress-scheduler'
+
 export function NavigationProgress() {
   const ref = useRef<LoadingBarRef>(null)
+  const schedulerRef = useRef<PendingProgressScheduler | null>(null)
+
+  if (schedulerRef.current === null) {
+    schedulerRef.current = createPendingProgressScheduler(() => ref.current)
+  }
+
   const state = useRouterState()
 
   useEffect(() => {
+    const scheduler = schedulerRef.current
+    if (!scheduler) return
     if (state.status === 'pending') {
-      ref.current?.continuousStart()
+      scheduler.notifyPending()
     } else {
-      ref.current?.complete()
+      scheduler.notifyIdle()
     }
   }, [state.status])
+
+  useEffect(() => {
+    const scheduler = schedulerRef.current
+    return () => {
+      scheduler?.dispose()
+      // Strict Mode unmount/remount would otherwise reuse the disposed
+      // scheduler (refs persist across mounts); reset so the next
+      // mount rebuilds a fresh one.
+      schedulerRef.current = null
+    }
+  }, [])
 
   return (
     <LoadingBar
