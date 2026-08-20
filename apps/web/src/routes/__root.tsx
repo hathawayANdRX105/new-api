@@ -35,6 +35,7 @@ import { GeneralError } from '@/features/errors/general-error'
 import { NotFoundError } from '@/features/errors/not-found-error'
 import { getSetupStatus } from '@/features/setup/api'
 import { useSystemConfig } from '@/hooks/use-system-config'
+import { useMediaQuery } from '@/hooks'
 import {
   bootstrapAuthentication,
   clearAuthenticatedClientState,
@@ -47,6 +48,7 @@ import { useAuthStore } from '@/stores/auth-store'
 function RootComponent() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const isMobileViewport = useMediaQuery('(max-width: 640px)')
 
   // Load system configuration (logo, system name, etc.) from backend
   useSystemConfig({ autoLoad: true })
@@ -97,7 +99,7 @@ function RootComponent() {
       <NavigationProgress />
       <Outlet />
       <Toaster closeButton duration={5000} position='top-center' richColors />
-      {import.meta.env.MODE === 'development' && (
+      {import.meta.env.MODE === 'development' && !isMobileViewport && (
         <>
           <ReactQueryDevtools buttonPosition='bottom-left' />
           <TanStackRouterDevtools position='bottom-right' />
