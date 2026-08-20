@@ -5354,6 +5354,25 @@
     "{{count}} probes": "Проверок: {{count}}",
     "{{count}} selected": "Выбрано: {{count}}",
     "{{count}} unique entries will be created": "Будет создано уникальных записей: {{count}}",
-    "Last Probe": "Последняя проверка"
+    "Last Probe": "Последняя проверка",
+    "Channel cooldown": "Охлаждение каналов",
+    "Enable channel health routing": "Включить маршрутизацию по состоянию каналов",
+    "Dynamically adjust channel selection weights based on health. Disabling restores baseline routing and disables cooldown.": "Динамически корректирует вес выбора каналов на основе их состояния. Отключение восстанавливает базовую маршрутизацию и отключает охлаждение.",
+    "Cooldown failure threshold": "Порог ошибок для охлаждения",
+    "Consecutive fatal or throttled errors required to trigger channel cooldown (minimum 1)": "Количество последовательных критических ошибок или ошибок ограничения частоты для перехода в охлаждение (минимум 1)",
+    "Max ejection percentage (%)": "Максимальный процент исключения (%)",
+    "Maximum percentage of cooling channels ejected per priority tier (0-100%)": "Максимальный процент охлаждающихся каналов, исключаемых на каждом уровне приоритета (0-100%)",
+    "Cooldown base duration (seconds)": "Базовая длительность охлаждения (секунды)",
+    "Initial cooldown duration when a channel enters cooldown": "Начальная длительность охлаждения при переходе канала в режим охлаждения",
+    "Cooldown max duration (seconds)": "Максимальная длительность охлаждения (секунды)",
+    "Maximum upper bound for sliding cooldown duration": "Верхний предел длительности скользящего охлаждения",
+    "Cooldown sliding factor (alpha)": "Коэффициент скольжения охлаждения (alpha)",
+    "Decay factor scaling duration across repeated activations (0.0 - 1.0)": "Коэффициент масштабирования длительности при повторных активациях (0.0 - 1.0)",
+    "Cooldown threshold must be at least 1": "Порог охлаждения должен быть не меньше 1",
+    "Cooldown base duration must be non-negative": "Базовая длительность охлаждения не может быть отрицательной",
+    "Cooldown max duration must be non-negative": "Максимальная длительность охлаждения не может быть отрицательной",
+    "Max ejection percentage must be between 0 and 100": "Процент исключения должен быть от 0 до 100",
+    "Cooldown alpha must be between 0 and 1": "Alpha охлаждения должна быть от 0 до 1",
+    "Cooldown max duration must be greater than or equal to the base duration": "Максимальная длительность охлаждения должна быть не меньше базовой длительности"
   }
 }

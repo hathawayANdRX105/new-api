@@ -5354,6 +5354,25 @@
     "{{count}} probes": "{{count}} 次探測",
     "{{count}} selected": "已選取 {{count}} 個",
     "{{count}} unique entries will be created": "將建立 {{count}} 個不重複項目",
-    "Last Probe": "上次探測"
+    "Last Probe": "上次探測",
+    "Channel cooldown": "渠道冷卻",
+    "Enable channel health routing": "啟用渠道健康路由",
+    "Dynamically adjust channel selection weights based on health. Disabling restores baseline routing and disables cooldown.": "根據健康狀態動態調整渠道選擇權重。關閉將恢復基準路由並停用冷卻機制。",
+    "Cooldown failure threshold": "冷卻失敗閾值",
+    "Consecutive fatal or throttled errors required to trigger channel cooldown (minimum 1)": "觸發渠道冷卻所需的連續嚴重錯誤或限流錯誤次數（最小為 1）",
+    "Max ejection percentage (%)": "最大驅逐比例 (%)",
+    "Maximum percentage of cooling channels ejected per priority tier (0-100%)": "每個優先級梯隊中最多驅逐的冷卻渠道比例（0-100%）",
+    "Cooldown base duration (seconds)": "冷卻基礎時長（秒）",
+    "Initial cooldown duration when a channel enters cooldown": "渠道初次進入冷卻時的初始持續時間",
+    "Cooldown max duration (seconds)": "冷卻最大時長（秒）",
+    "Maximum upper bound for sliding cooldown duration": "滑動冷卻持續時間的最大上限",
+    "Cooldown sliding factor (alpha)": "冷卻滑動衰減因子 (Alpha)",
+    "Decay factor scaling duration across repeated activations (0.0 - 1.0)": "連續觸發冷卻時用於調整時長的衰減因子（0.0 - 1.0）",
+    "Cooldown threshold must be at least 1": "冷卻閾值必須至少為 1",
+    "Cooldown base duration must be non-negative": "冷卻基礎時長不能為負數",
+    "Cooldown max duration must be non-negative": "冷卻最大時長不能為負數",
+    "Max ejection percentage must be between 0 and 100": "最大驅逐比例必須介於 0 到 100 之間",
+    "Cooldown alpha must be between 0 and 1": "冷卻 Alpha 必須介於 0 到 1 之間",
+    "Cooldown max duration must be greater than or equal to the base duration": "冷卻最大時長必須大於或等於基礎時長"
   }
 }

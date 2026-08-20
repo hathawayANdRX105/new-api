@@ -5354,6 +5354,25 @@
     "{{count}} probes": "{{count}} probes",
     "{{count}} selected": "{{count}} selected",
     "{{count}} unique entries will be created": "{{count}} unique entries will be created",
-    "Last Probe": "Last Probe"
+    "Last Probe": "Last Probe",
+    "Channel cooldown": "Channel cooldown",
+    "Enable channel health routing": "Enable channel health routing",
+    "Dynamically adjust channel selection weights based on health. Disabling restores baseline routing and disables cooldown.": "Dynamically adjust channel selection weights based on health. Disabling restores baseline routing and disables cooldown.",
+    "Cooldown failure threshold": "Cooldown failure threshold",
+    "Consecutive fatal or throttled errors required to trigger channel cooldown (minimum 1)": "Consecutive fatal or throttled errors required to trigger channel cooldown (minimum 1)",
+    "Max ejection percentage (%)": "Max ejection percentage (%)",
+    "Maximum percentage of cooling channels ejected per priority tier (0-100%)": "Maximum percentage of cooling channels ejected per priority tier (0-100%)",
+    "Cooldown base duration (seconds)": "Cooldown base duration (seconds)",
+    "Initial cooldown duration when a channel enters cooldown": "Initial cooldown duration when a channel enters cooldown",
+    "Cooldown max duration (seconds)": "Cooldown max duration (seconds)",
+    "Maximum upper bound for sliding cooldown duration": "Maximum upper bound for sliding cooldown duration",
+    "Cooldown sliding factor (alpha)": "Cooldown sliding factor (alpha)",
+    "Decay factor scaling duration across repeated activations (0.0 - 1.0)": "Decay factor scaling duration across repeated activations (0.0 - 1.0)",
+    "Cooldown threshold must be at least 1": "Cooldown threshold must be at least 1",
+    "Cooldown base duration must be non-negative": "Cooldown base duration must be non-negative",
+    "Cooldown max duration must be non-negative": "Cooldown max duration must be non-negative",
+    "Max ejection percentage must be between 0 and 100": "Max ejection percentage must be between 0 and 100",
+    "Cooldown alpha must be between 0 and 1": "Cooldown alpha must be between 0 and 1",
+    "Cooldown max duration must be greater than or equal to the base duration": "Cooldown max duration must be greater than or equal to the base duration"
   }
 }

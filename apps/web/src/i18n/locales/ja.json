@@ -5354,6 +5354,25 @@
     "{{count}} probes": "{{count}} 回のプローブ",
     "{{count}} selected": "{{count}} 件選択",
     "{{count}} unique entries will be created": "{{count}} 件の一意のエントリーが作成されます",
-    "Last Probe": "最終プローブ"
+    "Last Probe": "最終プローブ",
+    "Channel cooldown": "チャネルクールダウン",
+    "Enable channel health routing": "チャネルヘルスルーティングを有効化",
+    "Dynamically adjust channel selection weights based on health. Disabling restores baseline routing and disables cooldown.": "ヘルス状態に基づいてチャネル選択の重みを動的に調整します。無効にするとベースラインルーティングに戻り、クールダウンが無効化されます。",
+    "Cooldown failure threshold": "クールダウン失敗しきい値",
+    "Consecutive fatal or throttled errors required to trigger channel cooldown (minimum 1)": "チャネルクールダウンをトリガーするために必要な連続した致命的エラーまたはレート制限エラーの回数（最小 1）",
+    "Max ejection percentage (%)": "最大除外割合 (%)",
+    "Maximum percentage of cooling channels ejected per priority tier (0-100%)": "優先度階層ごとに除外されるクールダウン中チャネルの最大割合（0〜100%）",
+    "Cooldown base duration (seconds)": "クールダウン基本期間（秒）",
+    "Initial cooldown duration when a channel enters cooldown": "チャネルがクールダウンに入ったときの初期持続時間",
+    "Cooldown max duration (seconds)": "クールダウン最大期間（秒）",
+    "Maximum upper bound for sliding cooldown duration": "スライディングクールダウン期間の最大上限",
+    "Cooldown sliding factor (alpha)": "クールダウンスライド係数 (alpha)",
+    "Decay factor scaling duration across repeated activations (0.0 - 1.0)": "繰り返しのクールダウン発動における期間スケーリング減衰係数（0.0〜1.0）",
+    "Cooldown threshold must be at least 1": "クールダウンしきい値は 1 以上にしてください",
+    "Cooldown base duration must be non-negative": "クールダウン基本期間は負にできません",
+    "Cooldown max duration must be non-negative": "クールダウン最大期間は負にできません",
+    "Max ejection percentage must be between 0 and 100": "最大除外割合は 0〜100 の範囲で指定してください",
+    "Cooldown alpha must be between 0 and 1": "クールダウン Alpha は 0〜1 の範囲で指定してください",
+    "Cooldown max duration must be greater than or equal to the base duration": "クールダウン最大期間は基本期間以上にしてください"
   }
 }
