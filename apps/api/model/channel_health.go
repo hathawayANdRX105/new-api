@@ -1,7 +1,10 @@
 package model
 
 import (
+	"math"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -29,7 +32,23 @@ type channelHealthState struct {
 	requestCount    int     // guard: don't trust EWMA until min_requests reached
 	unauthorizedRun int     // consecutive 401s for escalation classification
 	rampExited      bool    // slow-start warm-up abandoned after a real failure
+	rampPending     bool    // post-cooldown first selection starts at the ramp floor
+
+	// Cooldown ejection state. failureStreak counts consecutive
+	// fatal/throttled outcomes and triggers a cooldown at the configured
+	// threshold. cooldownStreak is the number of successive activations,
+	// retained for the sliding-duration formula; it decays by one after a
+	// clean post-expiry success. cooldownUntil is the lazy expiry deadline;
+	// zero means "not cooling".
+	failureStreak  int
+	cooldownStreak int
+	cooldownUntil  time.Time
 }
+
+// channelHealthNow is the package clock, injected for deterministic tests.
+// Production code reads it unchanged; tests replace it and restore it via
+// t.Cleanup so no test leaks a frozen clock into another.
+var channelHealthNow = time.Now
 
 // Wire the kill-switch cleanup here rather than in operation_setting, which must
 // not import this package. Toggling the switch off now discards accumulated
@@ -220,9 +239,29 @@ func (m *ChannelHealthManager) RecordChannelOutcome(channelID int, outcome Chann
 		m.states[channelID] = state
 	}
 
-	// Neutral outcomes do not increment requestCount or update the score.
-	if outcome == OutcomeNeutral {
+	now := channelHealthNow()
+
+	// Finish any expired cooldown before applying the new outcome so a
+	// post-expiry result re-enters the slow-start curve cleanly.
+	if !state.cooldownUntil.IsZero() && !state.cooldownUntil.After(now) {
+		finishCooldownLocked(state)
+	}
+
+	switch outcome {
+	case OutcomeSuccess:
+		state.failureStreak = 0
+		// A clean success once a cooldown has expired decays the streak so the
+		// next failure run starts from a shorter duration.
+		if state.cooldownStreak > 0 && state.cooldownUntil.IsZero() {
+			state.cooldownStreak--
+		}
+	case OutcomeNeutral:
+		// Neutral stays score/request-count inert but clears an accumulated
+		// failure streak: it is not evidence against the channel.
+		state.failureStreak = 0
 		return
+	case OutcomeFatal, OutcomeThrottled:
+		state.failureStreak++
 	}
 
 	// Apply the appropriate observation via the shared EWMA update.
@@ -240,6 +279,7 @@ func (m *ChannelHealthManager) RecordChannelOutcome(channelID int, outcome Chann
 
 	// Increment request count and update EWMA.
 	state.requestCount++
+	state.rampPending = false
 
 	// A fatal outcome ends the warm-up ramp immediately: the channel has proven it
 	// is broken, so it should not keep climbing toward full weight.
@@ -247,13 +287,17 @@ func (m *ChannelHealthManager) RecordChannelOutcome(channelID int, outcome Chann
 		state.rampExited = true
 	}
 
-	if state.requestCount <= cfg.MinRequests {
-		return
+	if state.requestCount > cfg.MinRequests {
+		state.ewmaScore = cfg.Alpha*observation + (1-cfg.Alpha)*state.ewmaScore
+		if state.ewmaScore < cfg.MinScore {
+			state.ewmaScore = cfg.MinScore
+		}
 	}
 
-	state.ewmaScore = cfg.Alpha*observation + (1-cfg.Alpha)*state.ewmaScore
-	if state.ewmaScore < cfg.MinScore {
-		state.ewmaScore = cfg.MinScore
+	// The cooldown trigger is deliberately outside the MinRequests guard: a
+	// channel failing every request from cold must still be ejected.
+	if (outcome == OutcomeFatal || outcome == OutcomeThrottled) && state.failureStreak >= cfg.CooldownThreshold {
+		startCooldownLocked(state, cfg, now)
 	}
 }
 
@@ -321,23 +365,39 @@ func slowStartFactor(state *channelHealthState, minRequests int) float64 {
 	// entry is indistinguishable from a channel with no entry at all (which
 	// EffectiveWeight short-circuits to full weight), so it must not be derated.
 	// State can exist at zero count because ClassifyChannelOutcome tracks 401
-	// runs, and a run that later clears leaves the entry behind.
+	// runs, and a run that later clears leaves the entry behind. A cooldown
+	// expiry is the deliberate exception: rampPending starts the recovered
+	// channel at the first ramp step so it is probed rather than flooded.
 	//
 	// From the first observed outcome onward the factor is requestCount/minRequests:
 	// after one outcome a five-request window yields 1/5, and the window completes
 	// at requestCount == minRequests. Using the count already observed (rather than
 	// count+1) keeps the curve monotone across the zero-count boundary.
-	if minRequests <= 0 || state.rampExited || state.requestCount == 0 ||
-		state.requestCount >= minRequests {
+	if minRequests <= 0 || state.rampExited {
+		return 1.0
+	}
+	if state.rampPending {
+		return 1.0 / float64(minRequests)
+	}
+	if state.requestCount == 0 || state.requestCount >= minRequests {
 		return 1.0
 	}
 	return float64(state.requestCount) / float64(minRequests)
 }
 
 // EffectiveWeight returns the routing weight for a channel, scaled by its EWMA
-// health score and, while it is still warming up, by its slow-start factor.
-// When the kill switch is off, returns baseWeight unchanged.
+// health score and, while it is still warming up, by its slow-start factor. A
+// channel in a live cooldown weighs zero, so weighted-random selection ejects it
+// entirely. When the kill switch is off, returns baseWeight unchanged.
 func (m *ChannelHealthManager) EffectiveWeight(channelID int, baseWeight uint) float64 {
+	return m.routingWeight(channelID, baseWeight, false)
+}
+
+// routingWeight is the shared health/cooldown weight path. EffectiveWeight calls
+// it with bypassCooldown=false. Selectors call it with true only for cooling
+// candidates deliberately retained by the max-ejection cap; ejected candidates
+// are dropped from the candidate set instead.
+func (m *ChannelHealthManager) routingWeight(channelID int, baseWeight uint, bypassCooldown bool) float64 {
 	cfg := operation_setting.GetChannelHealthSetting()
 	if cfg == nil || !cfg.Enabled {
 		return float64(baseWeight)
@@ -351,7 +411,69 @@ func (m *ChannelHealthManager) EffectiveWeight(channelID int, baseWeight uint) f
 		return float64(baseWeight) // no history = full health, no ramp to apply
 	}
 
+	now := channelHealthNow()
+	if !state.cooldownUntil.IsZero() {
+		if state.cooldownUntil.After(now) {
+			if !bypassCooldown {
+				return 0
+			}
+		} else {
+			// Expired: finish it lazily so the recovered channel re-enters the
+			// slow-start curve on this very selection.
+			finishCooldownLocked(state)
+		}
+	}
+
 	return float64(baseWeight) * state.ewmaScore * slowStartFactor(state, cfg.MinRequests)
+}
+
+// cooldownDuration computes the sliding cooldown duration. The formula
+// base + (max-base)*(1-alpha^priorActivations) yields exactly base for the first
+// activation and approaches max as activations accumulate. A non-positive base or
+// max yields zero, which disables cooldown.
+func cooldownDuration(cfg *operation_setting.ChannelHealthSetting, priorActivations int) time.Duration {
+	base, max := cfg.CooldownBaseSeconds, cfg.CooldownMaxSeconds
+	if base <= 0 || max <= 0 {
+		return 0
+	}
+	if max < base {
+		max = base
+	}
+	// alpha^0 == 1, so the first activation is exactly base.
+	factor := 1.0 - math.Pow(cfg.CooldownAlpha, float64(priorActivations))
+	d := float64(base) + float64(max-base)*factor
+	if d < float64(base) {
+		d = float64(base)
+	}
+	if d > float64(max) {
+		d = float64(max)
+	}
+	return time.Duration(d * float64(time.Second))
+}
+
+// startCooldownLocked activates a cooldown sized from the current cooldownStreak,
+// then increments the streak so a repeat offender cools longer. Callers must hold
+// m.mu. A zero-duration configuration disables cooldown without disturbing EWMA.
+func startCooldownLocked(state *channelHealthState, cfg *operation_setting.ChannelHealthSetting, now time.Time) {
+	d := cooldownDuration(cfg, state.cooldownStreak)
+	if d <= 0 {
+		return
+	}
+	state.cooldownStreak++
+	state.failureStreak = 0
+	state.requestCount = 0
+	state.rampExited = false
+	state.cooldownUntil = now.Add(d)
+}
+
+// finishCooldownLocked clears an expired cooldown and arms the slow-start ramp so
+// the recovered channel is probed at 1/MinRequests of its weight before climbing
+// back. Callers must hold m.mu.
+func finishCooldownLocked(state *channelHealthState) {
+	state.cooldownUntil = time.Time{}
+	state.requestCount = 0
+	state.rampExited = false
+	state.rampPending = true
 }
 
 // routingBaseWeight converts a configured channel weight into the base weight
@@ -392,4 +514,69 @@ func (m *ChannelHealthManager) GetScore(channelID int) float64 {
 		return defaultScore
 	}
 	return state.ewmaScore
+}
+
+// FilterCoolingChannels reports which of channelIDs must be removed from a
+// priority tier because they are in a live cooldown.
+//
+// A partially cooling tier is capped: at most maxEjectionPercent of the tier is
+// removed (floored, but always at least one), and the rest stay selectable as a
+// degraded availability fallback whose weight the selector computes with
+// bypassCooldown=true. Cooling IDs are sorted ascending so the choice is
+// deterministic. A fully cooling tier is the safety exception and is ejected
+// wholesale, so selection descends to the next priority tier or fails fast
+// instead of retaining a channel that is certain to fail — that unbounded retry
+// against a dead tier is the hot loop this cooldown exists to stop.
+//
+// Ejection is disabled entirely when the kill switch is off or
+// maxEjectionPercent <= 0. Expired timers encountered here are finished lazily.
+func (m *ChannelHealthManager) FilterCoolingChannels(channelIDs []int, maxEjectionPercent int) map[int]bool {
+	ejected := make(map[int]bool)
+	cfg := operation_setting.GetChannelHealthSetting()
+	if cfg == nil || !cfg.Enabled || maxEjectionPercent <= 0 {
+		return ejected
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := channelHealthNow()
+
+	var cooling []int
+	for _, id := range channelIDs {
+		state, ok := m.states[id]
+		if !ok || state.cooldownUntil.IsZero() {
+			continue
+		}
+		if !state.cooldownUntil.After(now) {
+			finishCooldownLocked(state)
+			continue
+		}
+		cooling = append(cooling, id)
+	}
+	if len(cooling) == 0 {
+		return ejected
+	}
+
+	// Fully cooling tier, or an operator asking for total ejection: drop all.
+	if len(cooling) == len(channelIDs) || maxEjectionPercent >= 100 {
+		for _, id := range cooling {
+			ejected[id] = true
+		}
+		return ejected
+	}
+
+	sort.Ints(cooling)
+
+	ejectLimit := len(channelIDs) * maxEjectionPercent / 100 // floor
+	if ejectLimit < 1 {
+		ejectLimit = 1
+	}
+	if ejectLimit > len(cooling) {
+		ejectLimit = len(cooling)
+	}
+	for _, id := range cooling[:ejectLimit] {
+		ejected[id] = true
+	}
+	return ejected
 }

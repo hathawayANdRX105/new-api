@@ -218,6 +218,18 @@ func InitOptionMap() {
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
 	common.OptionMap["proxy_config"] = ""
 
+	// Channel health cooldown flat option keys, seeded from the runtime
+	// atomic config so the option-map snapshot reflects the live defaults.
+	healthCfg := operation_setting.GetChannelHealthSetting()
+	if healthCfg != nil {
+		common.OptionMap["ChannelHealthEnabled"] = strconv.FormatBool(healthCfg.Enabled)
+		common.OptionMap["ChannelHealthCooldownThreshold"] = strconv.Itoa(healthCfg.CooldownThreshold)
+		common.OptionMap["ChannelHealthCooldownBaseSeconds"] = strconv.Itoa(healthCfg.CooldownBaseSeconds)
+		common.OptionMap["ChannelHealthCooldownMaxSeconds"] = strconv.Itoa(healthCfg.CooldownMaxSeconds)
+		common.OptionMap["ChannelHealthCooldownMaxEjectionPercent"] = strconv.Itoa(healthCfg.CooldownMaxEjectionPercent)
+		common.OptionMap["ChannelHealthCooldownAlpha"] = strconv.FormatFloat(healthCfg.CooldownAlpha, 'f', -1, 64)
+	}
+
 	// 自动添加所有注册的模型配置
 	modelConfigs := config.GlobalConfig.ExportAllConfigs()
 	for k, v := range modelConfigs {
@@ -252,6 +264,9 @@ func validateOptionValue(key string, value string) error {
 	}
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
+	}
+	if operation_setting.IsChannelHealthOptionKey(key) {
+		return operation_setting.ValidateChannelHealthSettingValue(key, value)
 	}
 	return nil
 }
@@ -321,6 +336,18 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
+	if operation_setting.IsChannelHealthOptionKey(key) {
+		// Health flat options are dispatched to the atomic runtime config
+		// before the OptionMap lock is taken; a parse/validation error
+		// returns without storing an invalid value.
+		if err := operation_setting.UpdateChannelHealthSettingValue(key, value); err != nil {
+			return err
+		}
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap[key] = value
+		common.OptionMapRWMutex.Unlock()
+		return nil
+	}
 	if key == retiredThemeOptionKey {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)
