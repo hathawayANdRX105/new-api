@@ -122,16 +122,6 @@ func (topUp *TopUp) Update() error {
 	return err
 }
 
-func GetTopUpById(id int) *TopUp {
-	var topUp *TopUp
-	var err error
-	err = DB.Where("id = ?", id).First(&topUp).Error
-	if err != nil {
-		return nil
-	}
-	return topUp
-}
-
 func GetTopUpByTradeNo(tradeNo string) *TopUp {
 	var topUp *TopUp
 	var err error

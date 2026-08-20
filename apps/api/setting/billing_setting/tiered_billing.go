@@ -66,13 +66,7 @@ func GetPricingSyncData(base map[string]any) map[string]any {
 	return lo.Assign(base, extra)
 }
 
-// ---------------------------------------------------------------------------
-// Smoke test (called externally for validation before save)
-// ---------------------------------------------------------------------------
 
-func SmokeTestExpr(exprStr string) error {
-	return smokeTestExpr(exprStr)
-}
 
 func smokeTestExpr(exprStr string) error {
 	vectors := []billingexpr.TokenParams{

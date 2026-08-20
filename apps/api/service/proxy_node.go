@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -110,9 +109,7 @@ func proxyNodeEncryptionKey() []byte {
 	return sum[:]
 }
 
-func ProxyNodeChannelScopeValue(channelID int) string {
-	return strconv.Itoa(channelID)
-}
+
 
 func EncryptProxyNodeConfigForUpdate(value string) (string, error) {
 	return encryptProxyNodeConfig(value)

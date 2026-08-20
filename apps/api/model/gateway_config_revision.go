@@ -153,10 +153,6 @@ func RecordGatewayConfigOutboxAttempt(id int, errorClass string) error {
 		}).Error
 }
 
-func IncrementGatewayConfigOutboxAttempt(id int, errorClass string) error {
-	return RecordGatewayConfigOutboxAttempt(id, errorClass)
-}
-
 // MarkGatewayConfigOutboxPublished is idempotent and never overwrites the
 // first successful publication timestamp, so a duplicate publisher only causes
 // a duplicate notice instead of rewriting history.
