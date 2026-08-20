@@ -70,58 +70,139 @@ const channelTestModes = [
 ] as const
 type ChannelTestMode = (typeof channelTestModes)[number]
 
-const routingReliabilitySchema = z
-  .object({
-    RetryTimes: z.coerce.number().min(0).max(10),
-    ChannelDisableThreshold: numericString,
-    AutomaticDisableChannelEnabled: z.boolean(),
-    AutomaticEnableChannelEnabled: z.boolean(),
-    AutomaticDisableKeywords: z.string(),
-    AutomaticDisableStatusCodes: z.string(),
-    AutomaticRetryStatusCodes: z.string(),
-    monitor_setting: z.object({
-      auto_test_channel_enabled: z.boolean(),
-      auto_test_channel_minutes: z.coerce
+const createRoutingReliabilitySchema = (t: (key: string) => string) =>
+  z
+    .object({
+      RetryTimes: z.coerce.number().min(0).max(10),
+      ChannelHealthEnabled: z.boolean(),
+      ChannelHealthCooldownThreshold: z.coerce
         .number()
         .int()
-        .min(1, 'Interval must be at least 1 minute'),
-      channel_test_mode: z.enum(channelTestModes),
-    }),
-  })
-  .superRefine((values, ctx) => {
-    const disableParsed = parseHttpStatusCodeRules(
-      values.AutomaticDisableStatusCodes
-    )
-    if (!disableParsed.ok) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['AutomaticDisableStatusCodes'],
-        message: `Invalid status code rules: ${disableParsed.invalidTokens.join(
-          ', '
-        )}`,
-      })
-    }
+        .min(1, t('Cooldown threshold must be at least 1')),
+      ChannelHealthCooldownBaseSeconds: z.coerce
+        .number()
+        .int()
+        .min(0, t('Cooldown base duration must be non-negative')),
+      ChannelHealthCooldownMaxSeconds: z.coerce
+        .number()
+        .int()
+        .min(0, t('Cooldown max duration must be non-negative')),
+      ChannelHealthCooldownMaxEjectionPercent: z.coerce
+        .number()
+        .int()
+        .min(0, t('Max ejection percentage must be between 0 and 100'))
+        .max(100, t('Max ejection percentage must be between 0 and 100')),
+      ChannelHealthCooldownAlpha: z.coerce
+        .number()
+        .min(0, t('Cooldown alpha must be between 0 and 1'))
+        .max(1, t('Cooldown alpha must be between 0 and 1')),
+      ChannelDisableThreshold: numericString,
+      AutomaticDisableChannelEnabled: z.boolean(),
+      AutomaticEnableChannelEnabled: z.boolean(),
+      AutomaticDisableKeywords: z.string(),
+      AutomaticDisableStatusCodes: z.string(),
+      AutomaticRetryStatusCodes: z.string(),
+      monitor_setting: z.object({
+        auto_test_channel_enabled: z.boolean(),
+        auto_test_channel_minutes: z.coerce
+          .number()
+          .int()
+          .min(1, 'Interval must be at least 1 minute'),
+        channel_test_mode: z.enum(channelTestModes),
+      }),
+    })
+    .superRefine((values, ctx) => {
+      const disableParsed = parseHttpStatusCodeRules(
+        values.AutomaticDisableStatusCodes
+      )
+      if (!disableParsed.ok) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['AutomaticDisableStatusCodes'],
+          message: `Invalid status code rules: ${disableParsed.invalidTokens.join(
+            ', '
+          )}`,
+        })
+      }
 
-    const retryParsed = parseHttpStatusCodeRules(
-      values.AutomaticRetryStatusCodes
-    )
-    if (!retryParsed.ok) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['AutomaticRetryStatusCodes'],
-        message: `Invalid status code rules: ${retryParsed.invalidTokens.join(
-          ', '
-        )}`,
-      })
-    }
-  })
+      const retryParsed = parseHttpStatusCodeRules(
+        values.AutomaticRetryStatusCodes
+      )
+      if (!retryParsed.ok) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['AutomaticRetryStatusCodes'],
+          message: `Invalid status code rules: ${retryParsed.invalidTokens.join(
+            ', '
+          )}`,
+        })
+      }
 
-type RoutingReliabilityFormValues = z.output<typeof routingReliabilitySchema>
-type RoutingReliabilityFormInput = z.input<typeof routingReliabilitySchema>
+      if (
+        values.ChannelHealthCooldownMaxSeconds <
+        values.ChannelHealthCooldownBaseSeconds
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['ChannelHealthCooldownMaxSeconds'],
+          message: t(
+            'Cooldown max duration must be greater than or equal to the base duration'
+          ),
+        })
+      }
+    })
+
+type RoutingReliabilityFormValues = {
+  RetryTimes: number
+  ChannelHealthEnabled: boolean
+  ChannelHealthCooldownThreshold: number
+  ChannelHealthCooldownBaseSeconds: number
+  ChannelHealthCooldownMaxSeconds: number
+  ChannelHealthCooldownMaxEjectionPercent: number
+  ChannelHealthCooldownAlpha: number
+  ChannelDisableThreshold: string
+  AutomaticDisableChannelEnabled: boolean
+  AutomaticEnableChannelEnabled: boolean
+  AutomaticDisableKeywords: string
+  AutomaticDisableStatusCodes: string
+  AutomaticRetryStatusCodes: string
+  monitor_setting: {
+    auto_test_channel_enabled: boolean
+    auto_test_channel_minutes: number
+    channel_test_mode: ChannelTestMode
+  }
+}
+
+type RoutingReliabilityFormInput = {
+  RetryTimes: unknown
+  ChannelHealthEnabled: boolean
+  ChannelHealthCooldownThreshold: unknown
+  ChannelHealthCooldownBaseSeconds: unknown
+  ChannelHealthCooldownMaxSeconds: unknown
+  ChannelHealthCooldownMaxEjectionPercent: unknown
+  ChannelHealthCooldownAlpha: unknown
+  ChannelDisableThreshold: string
+  AutomaticDisableChannelEnabled: boolean
+  AutomaticEnableChannelEnabled: boolean
+  AutomaticDisableKeywords: string
+  AutomaticDisableStatusCodes: string
+  AutomaticRetryStatusCodes: string
+  monitor_setting: {
+    auto_test_channel_enabled: boolean
+    auto_test_channel_minutes: unknown
+    channel_test_mode: ChannelTestMode
+  }
+}
 
 type RoutingReliabilitySectionProps = {
   defaultValues: {
     RetryTimes: number
+    ChannelHealthEnabled: boolean
+    ChannelHealthCooldownThreshold: number
+    ChannelHealthCooldownBaseSeconds: number
+    ChannelHealthCooldownMaxSeconds: number
+    ChannelHealthCooldownMaxEjectionPercent: number
+    ChannelHealthCooldownAlpha: number
     ChannelDisableThreshold: string
     AutomaticDisableChannelEnabled: boolean
     AutomaticEnableChannelEnabled: boolean
@@ -140,6 +221,12 @@ function normalizeLineEndings(value: string) {
 
 type NormalizedRoutingReliabilityValues = {
   RetryTimes: number
+  ChannelHealthEnabled: boolean
+  ChannelHealthCooldownThreshold: number
+  ChannelHealthCooldownBaseSeconds: number
+  ChannelHealthCooldownMaxSeconds: number
+  ChannelHealthCooldownMaxEjectionPercent: number
+  ChannelHealthCooldownAlpha: number
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
@@ -158,10 +245,32 @@ function normalizeChannelTestMode(value?: string): ChannelTestMode {
   return 'scheduled_all'
 }
 
+// Mirrors the backend DefaultChannelHealthSetting; both fallback paths below read
+// these so a drawer default and a settings-form default cannot drift apart.
+const COOLDOWN_DEFAULTS = {
+  threshold: 5,
+  baseSeconds: 10,
+  maxSeconds: 60,
+  maxEjectionPercent: 50,
+  alpha: 0.3,
+} as const
+
 const buildFormDefaults = (
   defaults: RoutingReliabilitySectionProps['defaultValues']
 ): RoutingReliabilityFormInput => ({
   RetryTimes: defaults.RetryTimes ?? 0,
+  ChannelHealthEnabled: defaults.ChannelHealthEnabled ?? true,
+  ChannelHealthCooldownThreshold:
+    defaults.ChannelHealthCooldownThreshold ?? COOLDOWN_DEFAULTS.threshold,
+  ChannelHealthCooldownBaseSeconds:
+    defaults.ChannelHealthCooldownBaseSeconds ?? COOLDOWN_DEFAULTS.baseSeconds,
+  ChannelHealthCooldownMaxSeconds:
+    defaults.ChannelHealthCooldownMaxSeconds ?? COOLDOWN_DEFAULTS.maxSeconds,
+  ChannelHealthCooldownMaxEjectionPercent:
+    defaults.ChannelHealthCooldownMaxEjectionPercent ??
+    COOLDOWN_DEFAULTS.maxEjectionPercent,
+  ChannelHealthCooldownAlpha:
+    defaults.ChannelHealthCooldownAlpha ?? COOLDOWN_DEFAULTS.alpha,
   ChannelDisableThreshold: defaults.ChannelDisableThreshold ?? '',
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
@@ -185,6 +294,18 @@ const normalizeDefaults = (
   defaults: RoutingReliabilitySectionProps['defaultValues']
 ): NormalizedRoutingReliabilityValues => ({
   RetryTimes: defaults.RetryTimes ?? 0,
+  ChannelHealthEnabled: defaults.ChannelHealthEnabled ?? true,
+  ChannelHealthCooldownThreshold:
+    defaults.ChannelHealthCooldownThreshold ?? COOLDOWN_DEFAULTS.threshold,
+  ChannelHealthCooldownBaseSeconds:
+    defaults.ChannelHealthCooldownBaseSeconds ?? COOLDOWN_DEFAULTS.baseSeconds,
+  ChannelHealthCooldownMaxSeconds:
+    defaults.ChannelHealthCooldownMaxSeconds ?? COOLDOWN_DEFAULTS.maxSeconds,
+  ChannelHealthCooldownMaxEjectionPercent:
+    defaults.ChannelHealthCooldownMaxEjectionPercent ??
+    COOLDOWN_DEFAULTS.maxEjectionPercent,
+  ChannelHealthCooldownAlpha:
+    defaults.ChannelHealthCooldownAlpha ?? COOLDOWN_DEFAULTS.alpha,
   ChannelDisableThreshold: (defaults.ChannelDisableThreshold ?? '').trim(),
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
@@ -210,6 +331,13 @@ const normalizeFormValues = (
   values: RoutingReliabilityFormValues
 ): NormalizedRoutingReliabilityValues => ({
   RetryTimes: values.RetryTimes,
+  ChannelHealthEnabled: values.ChannelHealthEnabled,
+  ChannelHealthCooldownThreshold: values.ChannelHealthCooldownThreshold,
+  ChannelHealthCooldownBaseSeconds: values.ChannelHealthCooldownBaseSeconds,
+  ChannelHealthCooldownMaxSeconds: values.ChannelHealthCooldownMaxSeconds,
+  ChannelHealthCooldownMaxEjectionPercent:
+    values.ChannelHealthCooldownMaxEjectionPercent,
+  ChannelHealthCooldownAlpha: values.ChannelHealthCooldownAlpha,
   ChannelDisableThreshold: values.ChannelDisableThreshold.trim(),
   AutomaticDisableChannelEnabled: values.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: values.AutomaticEnableChannelEnabled,
@@ -229,11 +357,16 @@ const normalizeFormValues = (
   'monitor_setting.channel_test_mode': values.monitor_setting.channel_test_mode,
 })
 
+
 export function RoutingReliabilitySection({
   defaultValues,
 }: RoutingReliabilitySectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const routingReliabilitySchema = useMemo(
+    () => createRoutingReliabilitySchema(t),
+    [t]
+  )
   const baselineRef = useRef<NormalizedRoutingReliabilityValues>(
     normalizeDefaults(defaultValues)
   )
@@ -334,7 +467,14 @@ export function RoutingReliabilitySection({
                       />
                     </FormControl>
                     <FormDescription>
-                      {t('Number of times to retry failed requests (0-10)')}
+                      <span className='block'>
+                        {t('Number of times to retry failed requests (0-10)')}
+                      </span>
+                      <span className='block'>
+                        {t(
+                          'Also controls request-level channel exclusion: a failed channel is skipped for the rest of the request only when retries remain. With 0, exclusion has no effect.'
+                        )}
+                      </span>
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -365,6 +505,159 @@ export function RoutingReliabilitySection({
                             {t('Normalized:')} {autoRetryParsed.normalized}
                           </span>
                         )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+          <Separator />
+
+          <div className='flex min-w-0 flex-col gap-4'>
+            <div className='flex flex-col gap-1'>
+              <h4 className='text-sm font-medium'>{t('Channel cooldown')}</h4>
+            </div>
+            <div className='grid min-w-0 gap-6 lg:grid-cols-2'>
+              <FormField
+                control={form.control}
+                name='ChannelHealthEnabled'
+                render={({ field }) => (
+                  <SettingsSwitchItem className='lg:col-span-2'>
+                    <SettingsSwitchContent>
+                      <FormLabel>{t('Enable channel health routing')}</FormLabel>
+                      <FormDescription>
+                        {t(
+                          'Dynamically adjust channel selection weights based on health. Disabling restores baseline routing and disables cooldown.'
+                        )}
+                      </FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </SettingsSwitchItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='ChannelHealthCooldownThreshold'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Cooldown failure threshold')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='1'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Consecutive fatal or throttled errors required to trigger channel cooldown (minimum 1)'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='ChannelHealthCooldownMaxEjectionPercent'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Max ejection percentage (%)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        max='100'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Maximum percentage of cooling channels ejected per priority tier (0-100%)'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='ChannelHealthCooldownBaseSeconds'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Cooldown base duration (seconds)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Initial cooldown duration when a channel enters cooldown'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='ChannelHealthCooldownMaxSeconds'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Cooldown max duration (seconds)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Maximum upper bound for sliding cooldown duration'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='ChannelHealthCooldownAlpha'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Cooldown sliding factor (alpha)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        max='1'
+                        step='0.05'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Decay factor scaling duration across repeated activations (0.0 - 1.0)'
+                      )}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

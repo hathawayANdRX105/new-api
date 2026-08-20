@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -132,13 +133,6 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 		return nil, nil
 	}
 
-	if len(channels) == 1 {
-		if channel, ok := channelsIDM[channels[0]]; ok {
-			return channel, nil
-		}
-		return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channels[0])
-	}
-
 	uniquePriorities := make(map[int]bool)
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
@@ -177,29 +171,43 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 		return nil, nil
 	}
 
+	healthMgr := GetChannelHealthManager()
+	maxEjectionPercent := 0
+	if cfg := operation_setting.GetChannelHealthSetting(); cfg != nil {
+		maxEjectionPercent = cfg.CooldownMaxEjectionPercent
+	}
+	channelIDs := make([]int, 0, len(targetChannels))
+	for _, channel := range targetChannels {
+		channelIDs = append(channelIDs, channel.Id)
+	}
+	ejected := healthMgr.FilterCoolingChannels(channelIDs, maxEjectionPercent)
+	if len(ejected) > 0 {
+		filtered := targetChannels[:0]
+		for _, channel := range targetChannels {
+			if !ejected[channel.Id] {
+				filtered = append(filtered, channel)
+			}
+		}
+		targetChannels = filtered
+	}
+	if len(targetChannels) == 0 {
+		return nil, nil
+	}
 	if len(targetChannels) == 1 {
 		return targetChannels[0], nil
 	}
 
-	// Weighted random selection with EWMA health adjustment.
-	// effectiveWeight = baseWeight * ewmaScore, with smoothing for low-weight channels.
-	healthMgr := GetChannelHealthManager()
 	var weights []float64
 	var totalWeight float64
 	for _, ch := range targetChannels {
-		baseW := float64(ch.GetWeight())
-		if baseW == 0 {
-			baseW = 100 // smoothing: weight=0 channels get equal share
-		} else if baseW < 10 {
-			baseW *= 100 // smoothing: amplify low-weight differences
-		}
-		effW := healthMgr.EffectiveWeight(ch.Id, uint(baseW))
+		// Removed channels are truly ejected; retained cooling channels are the
+		// configured availability fallback and may keep their EWMA weight.
+		effW := healthMgr.routingWeight(ch.Id, routingBaseWeight(ch.GetWeight()), true)
 		weights = append(weights, effW)
 		totalWeight += effW
 	}
-
 	if totalWeight <= 0 {
-		return targetChannels[0], nil
+		return nil, nil
 	}
 
 	randomWeight := rand.Float64() * totalWeight

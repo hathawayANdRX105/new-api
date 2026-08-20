@@ -191,6 +191,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
+	// Health accounting is deferred until the loop ends: a failure a retry
+	// recovered from is not evidence against the channel. See
+	// model.RecordRequestAttempts.
+	var attempts []model.ChannelAttempt
+	winnerID, requestSucceeded := 0, false
+	defer func() {
+		model.GetChannelHealthManager().RecordRequestAttempts(attempts, winnerID, requestSucceeded)
+	}()
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
@@ -231,18 +239,21 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
-			model.GetChannelHealthManager().RecordOutcome(channel.Id, true)
+			winnerID, requestSucceeded = channel.Id, true
 			return
 		}
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		if types.IsChannelError(newAPIError) {
-			model.GetChannelHealthManager().RecordOutcome(channel.Id, false)
-			if retryParam.ExcludeSet != nil && !retryParam.ExcludeSet[channel.Id] {
-				retryParam.ExcludeSet[channel.Id] = true
-			}
+		// Classify by what the failure implies about the channel, not by whether the
+		// error code happens to carry a "channel:" prefix. Upstream 5xx and empty
+		// bodies are the channel's fault, 429 means it is merely throttled, and a
+		// 4xx such as 400 is the caller's problem and must not cost the channel.
+		outcome := model.ClassifyChannelOutcome(newAPIError, channel.Id)
+		attempts = append(attempts, model.ChannelAttempt{ChannelID: channel.Id, ModelName: relayInfo.OriginModelName, Outcome: outcome})
+		if outcome.ExcludesChannel() && retryParam.ExcludeSet != nil {
+			retryParam.ExcludeSet[channel.Id] = true
 		}
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
@@ -530,6 +541,14 @@ func RelayTask(c *gin.Context) {
 		ExcludeSet:  make(map[int]bool),
 	}
 
+	// Same deferral as Relay: only a request that exhausted its retries counts
+	// against the channels it tried.
+	var attempts []model.ChannelAttempt
+	winnerID, requestSucceeded := 0, false
+	defer func() {
+		model.GetChannelHealthManager().RecordRequestAttempts(attempts, winnerID, requestSucceeded)
+	}()
+
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		var channel *model.Channel
 
@@ -565,19 +584,24 @@ func RelayTask(c *gin.Context) {
 
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
 		if taskErr == nil {
-			model.GetChannelHealthManager().RecordOutcome(channel.Id, true)
+			winnerID, requestSucceeded = channel.Id, true
 			break
 		}
 
 		if !taskErr.LocalError {
-			model.GetChannelHealthManager().RecordOutcome(channel.Id, false)
-			if retryParam.ExcludeSet != nil && !retryParam.ExcludeSet[channel.Id] {
+			// TaskError carries a StatusCode, so the same classification applies here:
+			// build the equivalent NewAPIError once and reuse it for both the health
+			// decision and the existing channel-error reporting.
+			taskAPIError := types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode)
+			outcome := model.ClassifyChannelOutcome(taskAPIError, channel.Id)
+			attempts = append(attempts, model.ChannelAttempt{ChannelID: channel.Id, ModelName: relayInfo.OriginModelName, Outcome: outcome})
+			if outcome.ExcludesChannel() && retryParam.ExcludeSet != nil {
 				retryParam.ExcludeSet[channel.Id] = true
 			}
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+				taskAPIError)
 		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
