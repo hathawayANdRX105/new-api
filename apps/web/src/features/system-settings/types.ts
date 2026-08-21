@@ -228,12 +228,14 @@ export type ModelSettings = {
   'group_ratio_setting.group_special_usable_group': string
   RetryTimes: number
   ChannelDisableThreshold: string
-  ChannelHealthEnabled: boolean
-  ChannelHealthCooldownThreshold: number
-  ChannelHealthCooldownBaseSeconds: number
-  ChannelHealthCooldownMaxSeconds: number
-  ChannelHealthCooldownMaxEjectionPercent: number
-  ChannelHealthCooldownAlpha: number
+  CalmFastBase: number
+  CalmFastInterval: number
+  CalmSlowBase: number
+  CalmSlowInterval: number
+  DormantBase: number
+  DormantInterval: number
+  DormantMaxBase: number
+  DormantDisableThreshold: number
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
   AutomaticDisableKeywords: string

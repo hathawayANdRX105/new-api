@@ -6,12 +6,10 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
-
+	"time"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
-
 	"github.com/samber/lo"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -54,6 +52,12 @@ func GetEnabledModels() []string {
 	// Find distinct models
 	DB.Table("abilities").Where("enabled = ?", true).Distinct("model").Pluck("model", &models)
 	return models
+}
+
+func GetAllEnableAbilities() []Ability {
+	var abilities []Ability
+	DB.Find(&abilities, "enabled = ?", true)
+	return abilities
 }
 
 func getPriority(group string, model string, retry int) (int, error) {
@@ -131,26 +135,13 @@ func GetChannel(group string, model string, retry int, requestPath string, exclu
 	if len(abilities) == 0 {
 		return nil, nil
 	}
-	// Weighted random with EWMA health adjustment and capped cooldown ejection.
-	healthMgr := GetChannelHealthManager()
-	maxEjectionPercent := 0
-	if cfg := operation_setting.GetChannelHealthSetting(); cfg != nil {
-		maxEjectionPercent = cfg.CooldownMaxEjectionPercent
-	}
-	channelIDs := make([]int, 0, len(abilities))
+	filtered := abilities[:0]
 	for _, ability := range abilities {
-		channelIDs = append(channelIDs, ability.ChannelId)
-	}
-	ejected := healthMgr.FilterCoolingChannels(channelIDs, maxEjectionPercent)
-	if len(ejected) > 0 {
-		filtered := abilities[:0]
-		for _, ability := range abilities {
-			if !ejected[ability.ChannelId] {
-				filtered = append(filtered, ability)
-			}
+		if IsRouteHealthy(RouteKey{ChannelId: ability.ChannelId, Model: model}, time.Now()) {
+			filtered = append(filtered, ability)
 		}
-		abilities = filtered
 	}
+	abilities = filtered
 	if len(abilities) == 0 {
 		return nil, nil
 	}
@@ -158,9 +149,9 @@ func GetChannel(group string, model string, retry int, requestPath string, exclu
 	var weights []float64
 	var totalWeight float64
 	for _, ability := range abilities {
-		effW := healthMgr.routingWeight(ability.ChannelId, routingBaseWeight(int(ability.Weight)), true)
-		weights = append(weights, effW)
-		totalWeight += effW
+		weight := float64(routingBaseWeight(int(ability.Weight)))
+		weights = append(weights, weight)
+		totalWeight += weight
 	}
 	if totalWeight <= 0 {
 		return nil, nil
@@ -367,36 +358,6 @@ func updateAbilityStatusWithTx(tx *gorm.DB, channelId int, status bool) error {
 // status update and the routing revision bump commit together.
 func updateAbilityStatusByTagWithTx(tx *gorm.DB, tag string, status bool) error {
 	return tx.Model(&Ability{}).Where("tag = ?", tag).Select("enabled").Update("enabled", status).Error
-}
-
-// updateAbilityStatusByModelWithTx is the tx-aware form of
-// DisableChannelModel. It flips the enabled column for every ability
-// row matching both the given channel_id and model_name inside the outer
-// transaction. It deliberately does NOT filter on group, so a single
-// channel+model pair across all groups has its enabled status flipped —
-// a single dead model on an otherwise healthy channel should not cost the
-// channel its other models.
-func updateAbilityStatusByModelWithTx(tx *gorm.DB, channelID int, modelName string, status bool) error {
-	return tx.Model(&Ability{}).Where("channel_id = ? AND model = ?", channelID, modelName).Select("enabled").Update("enabled", status).Error
-}
-
-// DisableChannelModel flips the enabled status of every ability row matching
-// the given channel_id and model_name inside one MutateGatewayRouting revision,
-// so the ability write and the gateway routing revision bump commit atomically.
-// A single disabled model on an otherwise healthy channel should not cost the
-// channel its other models; this helper spans ALL groups deliberately.
-// Returns an error if modelName is empty, as there is nothing specific to disable.
-func DisableChannelModel(channelID int, modelName string) error {
-	if modelName == "" {
-		return fmt.Errorf("model name must not be empty")
-	}
-	_, err := MutateGatewayRouting(func(tx *gorm.DB) error {
-		if err := updateAbilityStatusByModelWithTx(tx, channelID, modelName, false); err != nil {
-			return err
-		}
-		return nil
-	})
-	return err
 }
 
 // UpdateAbilityStatusByTag remains the public convenience wrapper. It

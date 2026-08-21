@@ -72,16 +72,14 @@ const MODELS_SECTIONS = [
         defaultValues={{
           RetryTimes: settings.RetryTimes,
           ChannelDisableThreshold: settings.ChannelDisableThreshold,
-          ChannelHealthEnabled: settings.ChannelHealthEnabled,
-          ChannelHealthCooldownThreshold:
-            settings.ChannelHealthCooldownThreshold,
-          ChannelHealthCooldownBaseSeconds:
-            settings.ChannelHealthCooldownBaseSeconds,
-          ChannelHealthCooldownMaxSeconds:
-            settings.ChannelHealthCooldownMaxSeconds,
-          ChannelHealthCooldownMaxEjectionPercent:
-            settings.ChannelHealthCooldownMaxEjectionPercent,
-          ChannelHealthCooldownAlpha: settings.ChannelHealthCooldownAlpha,
+          CalmFastBase: settings.CalmFastBase,
+          CalmFastInterval: settings.CalmFastInterval,
+          CalmSlowBase: settings.CalmSlowBase,
+          CalmSlowInterval: settings.CalmSlowInterval,
+          DormantBase: settings.DormantBase,
+          DormantInterval: settings.DormantInterval,
+          DormantMaxBase: settings.DormantMaxBase,
+          DormantDisableThreshold: settings.DormantDisableThreshold,
           AutomaticDisableChannelEnabled:
             settings.AutomaticDisableChannelEnabled,
           AutomaticEnableChannelEnabled: settings.AutomaticEnableChannelEnabled,
