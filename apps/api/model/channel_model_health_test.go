@@ -199,7 +199,7 @@ func TestAdminRecoverAndDisable(t *testing.T) {
 	require.NoError(t, DisableRoute(key, now))
 	assert.False(t, IsRouteHealthy(key, now.Add(365*24*time.Hour)))
 
-	rows, err := ListChannelModelHealth()
+	rows, err := ListChannelModelHealth(0)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, HealthDisabled, rows[0].State)

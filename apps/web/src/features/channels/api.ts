@@ -354,6 +354,48 @@ export async function resetCodexUsage(
 }
 
 // ============================================================================
+// Channel Model Health (route isolation)
+// ============================================================================
+
+export type ChannelModelHealthRow = {
+  channel_id: number
+  model: string
+  state: 'healthy' | 'calm' | 'dormant' | 'disabled'
+  isolation_level: number
+  until: number | null
+  remaining_seconds: number
+  dormant_disable_count: number
+  last_error_code: string
+  last_error_at: number | null
+  updated_at: number
+}
+
+export async function getChannelModelHealth(channelId: number): Promise<{
+  success: boolean
+  message?: string
+  data?: ChannelModelHealthRow[]
+}> {
+  const res = await api.get(
+    `/api/channel/health?channel_id=${channelId}`,
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+export async function updateChannelModelHealth(
+  action: 'disable' | 'recover',
+  channelId: number,
+  model: string
+): Promise<{ success: boolean; message?: string }> {
+  const res = await api.post(
+    `/api/channel/health/${action}`,
+    { channel_id: channelId, model },
+    channelActionConfig()
+  )
+  return res.data
+}
+
+// ============================================================================
 // Multi-Key Management
 // ============================================================================
 

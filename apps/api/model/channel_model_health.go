@@ -114,4 +114,15 @@ func updateRouteState(key RouteKey, state string, level int, until *int64, dorma
 	return errors.New("channel model health state changed concurrently")
 }
 
-func ListChannelModelHealth() ([]ChannelModelHealth, error) { var rows []ChannelModelHealth; err:=DB.Order("channel_id, model").Find(&rows).Error; return rows,err }
+// ListChannelModelHealth returns the persisted isolation rows. A positive
+// channelID narrows the result to one channel, which is what the channel detail
+// panel needs; 0 returns every row for a system-wide view.
+func ListChannelModelHealth(channelID int) ([]ChannelModelHealth, error) {
+	var rows []ChannelModelHealth
+	query := DB.Order("channel_id, model")
+	if channelID > 0 {
+		query = query.Where("channel_id = ?", channelID)
+	}
+	err := query.Find(&rows).Error
+	return rows, err
+}

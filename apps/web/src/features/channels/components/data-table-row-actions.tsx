@@ -24,6 +24,7 @@ import {
   Pencil,
   PlugZap,
   Gauge,
+  HeartPulse,
   DollarSign,
   Download,
   Copy,
@@ -121,6 +122,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const handleQueryBalance = () => {
     setCurrentRow(channel)
     setOpen('balance-query')
+  }
+
+  const handleRouteHealth = () => {
+    setCurrentRow(channel)
+    setOpen('route-health')
   }
 
   const handleFetchModels = () => {
@@ -286,6 +292,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             {t('Query Balance')}
             <DropdownMenuShortcut>
               <DollarSign size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+
+          {/* Route Health */}
+          <DropdownMenuItem onClick={handleRouteHealth}>
+            {t('Route health')}
+            <DropdownMenuShortcut>
+              <HeartPulse size={16} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
