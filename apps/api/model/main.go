@@ -258,7 +258,7 @@ func migrateDB() error {
 		return err
 	}
 
-	err := DB.AutoMigrate(
+err := DB.AutoMigrate(
 		&Channel{},
 		&Token{},
 		&User{},
@@ -295,6 +295,7 @@ func migrateDB() error {
 		&ProxyNode{},
 		&GatewayConfigRevision{},
 		&GatewayConfigOutbox{},
+		&ChannelModelHealth{},
 	)
 	if err != nil {
 		return err

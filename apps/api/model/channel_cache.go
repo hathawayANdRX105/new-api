@@ -12,7 +12,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -171,25 +170,13 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 		return nil, nil
 	}
 
-	healthMgr := GetChannelHealthManager()
-	maxEjectionPercent := 0
-	if cfg := operation_setting.GetChannelHealthSetting(); cfg != nil {
-		maxEjectionPercent = cfg.CooldownMaxEjectionPercent
-	}
-	channelIDs := make([]int, 0, len(targetChannels))
+	filtered := targetChannels[:0]
 	for _, channel := range targetChannels {
-		channelIDs = append(channelIDs, channel.Id)
-	}
-	ejected := healthMgr.FilterCoolingChannels(channelIDs, maxEjectionPercent)
-	if len(ejected) > 0 {
-		filtered := targetChannels[:0]
-		for _, channel := range targetChannels {
-			if !ejected[channel.Id] {
-				filtered = append(filtered, channel)
-			}
+		if IsRouteHealthy(RouteKey{ChannelId: channel.Id, Model: model}, time.Now()) {
+			filtered = append(filtered, channel)
 		}
-		targetChannels = filtered
 	}
+	targetChannels = filtered
 	if len(targetChannels) == 0 {
 		return nil, nil
 	}
@@ -200,11 +187,9 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	var weights []float64
 	var totalWeight float64
 	for _, ch := range targetChannels {
-		// Removed channels are truly ejected; retained cooling channels are the
-		// configured availability fallback and may keep their EWMA weight.
-		effW := healthMgr.routingWeight(ch.Id, routingBaseWeight(ch.GetWeight()), true)
-		weights = append(weights, effW)
-		totalWeight += effW
+		weight := float64(routingBaseWeight(ch.GetWeight()))
+		weights = append(weights, weight)
+		totalWeight += weight
 	}
 	if totalWeight <= 0 {
 		return nil, nil

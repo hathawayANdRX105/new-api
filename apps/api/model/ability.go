@@ -6,12 +6,10 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
-
+	"time"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
-
 	"github.com/samber/lo"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -137,26 +135,13 @@ func GetChannel(group string, model string, retry int, requestPath string, exclu
 	if len(abilities) == 0 {
 		return nil, nil
 	}
-	// Weighted random with EWMA health adjustment and capped cooldown ejection.
-	healthMgr := GetChannelHealthManager()
-	maxEjectionPercent := 0
-	if cfg := operation_setting.GetChannelHealthSetting(); cfg != nil {
-		maxEjectionPercent = cfg.CooldownMaxEjectionPercent
-	}
-	channelIDs := make([]int, 0, len(abilities))
+	filtered := abilities[:0]
 	for _, ability := range abilities {
-		channelIDs = append(channelIDs, ability.ChannelId)
-	}
-	ejected := healthMgr.FilterCoolingChannels(channelIDs, maxEjectionPercent)
-	if len(ejected) > 0 {
-		filtered := abilities[:0]
-		for _, ability := range abilities {
-			if !ejected[ability.ChannelId] {
-				filtered = append(filtered, ability)
-			}
+		if IsRouteHealthy(RouteKey{ChannelId: ability.ChannelId, Model: model}, time.Now()) {
+			filtered = append(filtered, ability)
 		}
-		abilities = filtered
 	}
+	abilities = filtered
 	if len(abilities) == 0 {
 		return nil, nil
 	}
@@ -164,9 +149,9 @@ func GetChannel(group string, model string, retry int, requestPath string, exclu
 	var weights []float64
 	var totalWeight float64
 	for _, ability := range abilities {
-		effW := healthMgr.routingWeight(ability.ChannelId, routingBaseWeight(int(ability.Weight)), true)
-		weights = append(weights, effW)
-		totalWeight += effW
+		weight := float64(routingBaseWeight(int(ability.Weight)))
+		weights = append(weights, weight)
+		totalWeight += weight
 	}
 	if totalWeight <= 0 {
 		return nil, nil

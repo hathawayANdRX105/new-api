@@ -231,27 +231,29 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
-			model.GetChannelHealthManager().RecordChannelOutcome(channel.Id, model.ClassifyChannelOutcome(nil, channel.Id))
 			return
 		}
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		// Classify by what the failure implies about the channel, not by whether the
-		// error code happens to carry a "channel:" prefix. Upstream 5xx and empty
-		// bodies are the channel's fault, 429 means it is merely throttled, and a
-		// 4xx such as 400 is the caller's problem and must not cost the channel.
-		outcome := model.ClassifyChannelOutcome(newAPIError, channel.Id)
-		if outcome.AffectsHealth() {
-			model.GetChannelHealthManager().RecordChannelOutcome(channel.Id, outcome)
-		}
-		if outcome.ExcludesChannel() && retryParam.ExcludeSet != nil {
-			retryParam.ExcludeSet[channel.Id] = true
+		// The state machine consumes the retry loop's own verdict: only a failure
+		// this request would actually retry against another channel isolates the
+		// (channel, model) route. Request-level exclusion stays in place so the
+		// immediate next attempt cannot land on the same channel.
+		retryEligible := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+		if retryEligible {
+			routeKey := model.RouteKey{ChannelId: channel.Id, Model: relayInfo.OriginModelName}
+			if healthErr := model.RecordRetryableFailure(routeKey, string(newAPIError.GetErrorCode()), time.Now()); healthErr != nil {
+				logger.LogError(c, healthErr.Error())
+			}
+			if retryParam.ExcludeSet != nil {
+				retryParam.ExcludeSet[channel.Id] = true
+			}
 		}
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		if !retryEligible {
 			break
 		}
 	}
@@ -570,21 +572,20 @@ func RelayTask(c *gin.Context) {
 
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
 		if taskErr == nil {
-			model.GetChannelHealthManager().RecordChannelOutcome(channel.Id, model.ClassifyChannelOutcome(nil, channel.Id))
 			break
 		}
 
+		retryEligible := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
 		if !taskErr.LocalError {
-			// TaskError carries a StatusCode, so the same classification applies here:
-			// build the equivalent NewAPIError once and reuse it for both the health
-			// decision and the existing channel-error reporting.
 			taskAPIError := types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode)
-			outcome := model.ClassifyChannelOutcome(taskAPIError, channel.Id)
-			if outcome.AffectsHealth() {
-				model.GetChannelHealthManager().RecordChannelOutcome(channel.Id, outcome)
-			}
-			if outcome.ExcludesChannel() && retryParam.ExcludeSet != nil {
-				retryParam.ExcludeSet[channel.Id] = true
+			if retryEligible {
+				routeKey := model.RouteKey{ChannelId: channel.Id, Model: relayInfo.OriginModelName}
+				if healthErr := model.RecordRetryableFailure(routeKey, string(taskAPIError.GetErrorCode()), time.Now()); healthErr != nil {
+					logger.LogError(c, healthErr.Error())
+				}
+				if retryParam.ExcludeSet != nil {
+					retryParam.ExcludeSet[channel.Id] = true
+				}
 			}
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
@@ -592,7 +593,7 @@ func RelayTask(c *gin.Context) {
 				taskAPIError)
 		}
 
-		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+		if !retryEligible {
 			break
 		}
 	}
