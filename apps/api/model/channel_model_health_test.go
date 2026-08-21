@@ -472,3 +472,39 @@ func TestCacheHydrationAndExpiryPersistence(t *testing.T) {
 	assert.Equal(t, HealthHealthy, row2.State, "DB must still be healthy after second hydration")
 	assert.Nil(t, row2.Until)
 }
+
+// TestGetRouteIsolationReportsTransition covers the snapshot the relay layer
+// logs after a transition. Without a populated state/level/until an operator
+// cannot tell a RouteKey isolation apart from a plain upstream failure, so the
+// accessor must report the ladder position and a future deadline, and must
+// report ok=false for a route that was never isolated.
+func TestGetRouteIsolationReportsTransition(t *testing.T) {
+	withRouteHealthDB(t)
+	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+
+	key := RouteKey{ChannelId: 9801, Model: "isolation-report-model"}
+	untouched := RouteKey{ChannelId: 9801, Model: "never-failed-model"}
+	now := time.Unix(1_800_000_000, 0)
+
+	state, level, until, ok := GetRouteIsolation(untouched)
+	assert.False(t, ok, "a route with no record has no isolation snapshot")
+	assert.Equal(t, HealthHealthy, state)
+	assert.Zero(t, level)
+	assert.Zero(t, until)
+
+	require.NoError(t, RecordRetryableFailure(key, "do_request_failed", now))
+
+	state, level, until, ok = GetRouteIsolation(key)
+	require.True(t, ok, "an isolated route must expose its snapshot")
+	assert.Equal(t, HealthCalm, state)
+	assert.Equal(t, 1, level)
+	cfg := operation_setting.DefaultChannelModelHealthSetting()
+	assert.Equal(t, now.Unix()+int64(cfg.CalmFastBase), until, "deadline must match the level 1 duration")
+
+	// Escalation must be visible through the same accessor, otherwise the log
+	// would keep reporting a stale level.
+	require.NoError(t, RecordRetryableFailure(key, "do_request_failed", now))
+	_, level, _, ok = GetRouteIsolation(key)
+	require.True(t, ok)
+	assert.Equal(t, 2, level, "the accessor must follow the ladder")
+}

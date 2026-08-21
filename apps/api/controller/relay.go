@@ -244,9 +244,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		retryEligible := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
 		if retryEligible {
 			routeKey := model.RouteKey{ChannelId: channel.Id, Model: relayInfo.OriginModelName}
-			if healthErr := model.RecordRetryableFailure(routeKey, string(newAPIError.GetErrorCode()), time.Now()); healthErr != nil {
-				logger.LogError(c, healthErr.Error())
-			}
+			recordRouteIsolation(c, routeKey, newAPIError)
 			if retryParam.ExcludeSet != nil {
 				retryParam.ExcludeSet[channel.Id] = true
 			}
@@ -341,6 +339,31 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, newAPIError
 	}
 	return channel, nil
+}
+
+// recordRouteIsolation persists one retry-eligible failure against the route and
+// logs the resulting transition. The log line carries the request id, so an
+// operator can tell a RouteKey transition apart from a plain upstream failure
+// (logged by processChannelError) and from a system performance rejection
+// (logged by the SystemPerformanceCheck middleware).
+func recordRouteIsolation(c *gin.Context, routeKey model.RouteKey, apiErr *types.NewAPIError) {
+	now := time.Now()
+	if healthErr := model.RecordRetryableFailure(routeKey, string(apiErr.GetErrorCode()), now); healthErr != nil {
+		logger.LogError(c, healthErr.Error())
+		return
+	}
+	state, level, until, ok := model.GetRouteIsolation(routeKey)
+	if !ok {
+		return
+	}
+	// A disabled route has no deadline, and a clock adjustment could leave an
+	// elapsed one behind; clamp so the log never reports a negative countdown.
+	remaining := int64(0)
+	if until > now.Unix() {
+		remaining = until - now.Unix()
+	}
+	logger.LogWarn(c, fmt.Sprintf("route isolation: channel #%d model %s -> %s level=%d remaining=%ds error_code=%s",
+		routeKey.ChannelId, routeKey.Model, state, level, remaining, apiErr.GetErrorCode()))
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
@@ -580,9 +603,7 @@ func RelayTask(c *gin.Context) {
 			taskAPIError := types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode)
 			if retryEligible {
 				routeKey := model.RouteKey{ChannelId: channel.Id, Model: relayInfo.OriginModelName}
-				if healthErr := model.RecordRetryableFailure(routeKey, string(taskAPIError.GetErrorCode()), time.Now()); healthErr != nil {
-					logger.LogError(c, healthErr.Error())
-				}
+				recordRouteIsolation(c, routeKey, taskAPIError)
 				if retryParam.ExcludeSet != nil {
 					retryParam.ExcludeSet[channel.Id] = true
 				}

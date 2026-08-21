@@ -92,6 +92,22 @@ func GetRouteHealth(key RouteKey) (string, bool) {
 	}
 	return state.State, state.State == HealthHealthy
 }
+
+// GetRouteIsolation exposes the cached isolation snapshot so the relay layer can
+// log a state transition with the request id attached. ok is false when the
+// route has no isolation record, which is the healthy default.
+func GetRouteIsolation(key RouteKey) (state string, level int, until int64, ok bool) {
+	routeHealthLock.RLock()
+	cached := routeHealthIDM[key]
+	routeHealthLock.RUnlock()
+	if cached == nil {
+		return HealthHealthy, 0, 0, false
+	}
+	if cached.Until != nil {
+		until = *cached.Until
+	}
+	return cached.State, cached.IsolationLevel, until, true
+}
 func cacheHealth(row *ChannelModelHealth) {
 	var until *int64
 	if row.Until != nil {
