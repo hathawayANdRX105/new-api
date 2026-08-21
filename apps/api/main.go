@@ -98,6 +98,7 @@ func main() {
 				}
 			}()
 			model.InitChannelCache()
+			model.InitChannelModelHealthCache()
 		}()
 
 		go model.SyncChannelCache(common.SyncFrequency)

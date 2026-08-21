@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
 )
@@ -82,6 +83,35 @@ func cacheHealth(row *ChannelModelHealth) {
 func ClearRouteHealthCache() {
 	routeHealthLock.Lock()
 	routeHealthIDM = map[RouteKey]*routeHealthState{}
+	routeHealthLock.Unlock()
+}
+
+// InitChannelModelHealthCache loads persisted route state once at startup. The
+// selectors still perform only an in-process lookup; rows created after startup
+// are inserted directly by RecordRetryableFailure and mirrored immediately.
+func InitChannelModelHealthCache() {
+	var rows []ChannelModelHealth
+	if err := DB.Find(&rows).Error; err != nil {
+		common.SysError("failed to load channel model health cache: " + err.Error())
+		return
+	}
+	cache := make(map[RouteKey]*routeHealthState, len(rows))
+	for _, row := range rows {
+		var until *int64
+		if row.Until != nil {
+			value := *row.Until
+			until = &value
+		}
+		cache[RouteKey{ChannelId: row.ChannelId, Model: row.Model}] = &routeHealthState{
+			State:               row.State,
+			IsolationLevel:      row.IsolationLevel,
+			Until:               until,
+			Version:             row.Version,
+			DormantDisableCount: row.DormantDisableCount,
+		}
+	}
+	routeHealthLock.Lock()
+	routeHealthIDM = cache
 	routeHealthLock.Unlock()
 }
 
