@@ -116,26 +116,3 @@ func TestRoutingBaseWeightVsLegacySmoothing(t *testing.T) {
 		"new routingBaseWeight: weight=5 → 6, weight=30 → 31, so 6 < 31 (fixed)")
 }
 
-// ---------------------------------------------------------------------------
-// 5️⃣ Health score correct overlay
-// ---------------------------------------------------------------------------
-
-func TestRoutingBaseWeightWithHealthScore(t *testing.T) {
-	// resetHealthManager and setTestConfig are unexported helpers in
-	// channel_health_test.go, same package → accessible here.
-	resetHealthManager()
-	setTestConfig(true, 0.5, 0.05, 0) // Enabled, Alpha=0.5, MinScore=0.05, MinRequests=0
-
-	// Record one failure for channel ID 42 → ewmaScore becomes 0.5
-	mgr := GetChannelHealthManager()
-	id := 42
-	mgr.RecordOutcome(id, false)
-
-	// EffectiveWeight(id, routingBaseWeight(10)) should be 11 * 0.5 = 5.5
-	// routingBaseWeight(10) = 10+1 = 11 (since 10 >= 0)
-	actual := mgr.EffectiveWeight(id, routingBaseWeight(10))
-	expected := 11.0 * 0.5 // routingBaseWeight(10) * ewmaScore
-
-	assert.Equal(t, expected, actual,
-		"EffectiveWeight with routingBaseWeight(10) should be 5.5, got %.2f", actual)
-}
