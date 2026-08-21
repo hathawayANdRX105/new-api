@@ -224,7 +224,7 @@ relayconvert.SetMediaResolver(relayconvert.MediaResolver{
 - `Usage`：响应转换后的统一 token usage
 - `Stream`：结果是否来自流式转换
 
-如果需要固定转换路径，可使用 `ConvertRequestVia`；如果需要按转换器 ID 执行，可使用 `ConvertRequestByID`、`ConvertResponseByID` 和 `NewResponseStreamStateByID`。
+如果需要固定转换路径，可使用 `ConvertRequestVia`；如果需要按转换器 ID 执行，可使用 `ConvertRequestByID` 和 `ConvertResponseByID`。
 
 ## 开发
 

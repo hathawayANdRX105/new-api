@@ -70,26 +70,32 @@ const channelTestModes = [
 ] as const
 type ChannelTestMode = (typeof channelTestModes)[number]
 
-const createRoutingReliabilitySchema = (t: (key: string) => string) => {
-  const isolationSeconds = z.coerce
-    .number()
-    .int()
-    .min(0, t('Isolation durations must be non-negative'))
-
-  return z
+const createRoutingReliabilitySchema = (t: (key: string) => string) =>
+  z
     .object({
       RetryTimes: z.coerce.number().min(0).max(10),
-      CalmFastBase: isolationSeconds,
-      CalmFastInterval: isolationSeconds,
-      CalmSlowBase: isolationSeconds,
-      CalmSlowInterval: isolationSeconds,
-      DormantBase: isolationSeconds,
-      DormantInterval: isolationSeconds,
-      DormantMaxBase: isolationSeconds,
-      DormantDisableThreshold: z.coerce
+      ChannelHealthEnabled: z.boolean(),
+      ChannelHealthCooldownThreshold: z.coerce
         .number()
         .int()
-        .min(0, t('Auto-disable threshold must be non-negative')),
+        .min(1, t('Cooldown threshold must be at least 1')),
+      ChannelHealthCooldownBaseSeconds: z.coerce
+        .number()
+        .int()
+        .min(0, t('Cooldown base duration must be non-negative')),
+      ChannelHealthCooldownMaxSeconds: z.coerce
+        .number()
+        .int()
+        .min(0, t('Cooldown max duration must be non-negative')),
+      ChannelHealthCooldownMaxEjectionPercent: z.coerce
+        .number()
+        .int()
+        .min(0, t('Max ejection percentage must be between 0 and 100'))
+        .max(100, t('Max ejection percentage must be between 0 and 100')),
+      ChannelHealthCooldownAlpha: z.coerce
+        .number()
+        .min(0, t('Cooldown alpha must be between 0 and 1'))
+        .max(1, t('Cooldown alpha must be between 0 and 1')),
       ChannelDisableThreshold: numericString,
       AutomaticDisableChannelEnabled: z.boolean(),
       AutomaticEnableChannelEnabled: z.boolean(),
@@ -131,48 +137,29 @@ const createRoutingReliabilitySchema = (t: (key: string) => string) => {
           )}`,
         })
       }
+
+      if (
+        values.ChannelHealthCooldownMaxSeconds <
+        values.ChannelHealthCooldownBaseSeconds
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['ChannelHealthCooldownMaxSeconds'],
+          message: t(
+            'Cooldown max duration must be greater than or equal to the base duration'
+          ),
+        })
+      }
     })
-}
 
-// The eight isolation keys share one shape across the form input, the parsed
-// values, and the diffed payload, so they are declared once here.
-type RouteIsolationValues = {
-  CalmFastBase: number
-  CalmFastInterval: number
-  CalmSlowBase: number
-  CalmSlowInterval: number
-  DormantBase: number
-  DormantInterval: number
-  DormantMaxBase: number
-  DormantDisableThreshold: number
-}
-
-const ROUTE_ISOLATION_KEYS = [
-  'CalmFastBase',
-  'CalmFastInterval',
-  'CalmSlowBase',
-  'CalmSlowInterval',
-  'DormantBase',
-  'DormantInterval',
-  'DormantMaxBase',
-  'DormantDisableThreshold',
-] as const satisfies ReadonlyArray<keyof RouteIsolationValues>
-
-// Mirrors the backend DefaultChannelModelHealthSetting, so a form rendered before
-// the options request resolves shows the durations that are actually in effect.
-const ROUTE_ISOLATION_DEFAULTS: RouteIsolationValues = {
-  CalmFastBase: 3,
-  CalmFastInterval: 3,
-  CalmSlowBase: 20,
-  CalmSlowInterval: 20,
-  DormantBase: 120,
-  DormantInterval: 120,
-  DormantMaxBase: 360,
-  DormantDisableThreshold: 0,
-}
-
-type RoutingReliabilityFormValues = RouteIsolationValues & {
+type RoutingReliabilityFormValues = {
   RetryTimes: number
+  ChannelHealthEnabled: boolean
+  ChannelHealthCooldownThreshold: number
+  ChannelHealthCooldownBaseSeconds: number
+  ChannelHealthCooldownMaxSeconds: number
+  ChannelHealthCooldownMaxEjectionPercent: number
+  ChannelHealthCooldownAlpha: number
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
@@ -186,11 +173,14 @@ type RoutingReliabilityFormValues = RouteIsolationValues & {
   }
 }
 
-type RoutingReliabilityFormInput = Record<
-  keyof RouteIsolationValues,
-  unknown
-> & {
+type RoutingReliabilityFormInput = {
   RetryTimes: unknown
+  ChannelHealthEnabled: boolean
+  ChannelHealthCooldownThreshold: unknown
+  ChannelHealthCooldownBaseSeconds: unknown
+  ChannelHealthCooldownMaxSeconds: unknown
+  ChannelHealthCooldownMaxEjectionPercent: unknown
+  ChannelHealthCooldownAlpha: unknown
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
@@ -205,8 +195,14 @@ type RoutingReliabilityFormInput = Record<
 }
 
 type RoutingReliabilitySectionProps = {
-  defaultValues: Partial<RouteIsolationValues> & {
+  defaultValues: {
     RetryTimes: number
+    ChannelHealthEnabled: boolean
+    ChannelHealthCooldownThreshold: number
+    ChannelHealthCooldownBaseSeconds: number
+    ChannelHealthCooldownMaxSeconds: number
+    ChannelHealthCooldownMaxEjectionPercent: number
+    ChannelHealthCooldownAlpha: number
     ChannelDisableThreshold: string
     AutomaticDisableChannelEnabled: boolean
     AutomaticEnableChannelEnabled: boolean
@@ -223,8 +219,14 @@ function normalizeLineEndings(value: string) {
   return value.replaceAll('\r\n', '\n')
 }
 
-type NormalizedRoutingReliabilityValues = RouteIsolationValues & {
+type NormalizedRoutingReliabilityValues = {
   RetryTimes: number
+  ChannelHealthEnabled: boolean
+  ChannelHealthCooldownThreshold: number
+  ChannelHealthCooldownBaseSeconds: number
+  ChannelHealthCooldownMaxSeconds: number
+  ChannelHealthCooldownMaxEjectionPercent: number
+  ChannelHealthCooldownAlpha: number
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
@@ -243,24 +245,32 @@ function normalizeChannelTestMode(value?: string): ChannelTestMode {
   return 'scheduled_all'
 }
 
-// resolveIsolationValues fills every isolation key from the loaded options,
-// falling back to the backend defaults. Both the form defaults and the saved
-// baseline read it, so an unsaved field cannot appear changed on first render.
-function resolveIsolationValues(
-  defaults: RoutingReliabilitySectionProps['defaultValues']
-): RouteIsolationValues {
-  const resolved = { ...ROUTE_ISOLATION_DEFAULTS }
-  for (const key of ROUTE_ISOLATION_KEYS) {
-    resolved[key] = defaults[key] ?? ROUTE_ISOLATION_DEFAULTS[key]
-  }
-  return resolved
-}
+// Mirrors the backend DefaultChannelHealthSetting; both fallback paths below read
+// these so a drawer default and a settings-form default cannot drift apart.
+const COOLDOWN_DEFAULTS = {
+  threshold: 5,
+  baseSeconds: 10,
+  maxSeconds: 60,
+  maxEjectionPercent: 50,
+  alpha: 0.3,
+} as const
 
 const buildFormDefaults = (
   defaults: RoutingReliabilitySectionProps['defaultValues']
 ): RoutingReliabilityFormInput => ({
-  ...resolveIsolationValues(defaults),
   RetryTimes: defaults.RetryTimes ?? 0,
+  ChannelHealthEnabled: defaults.ChannelHealthEnabled ?? true,
+  ChannelHealthCooldownThreshold:
+    defaults.ChannelHealthCooldownThreshold ?? COOLDOWN_DEFAULTS.threshold,
+  ChannelHealthCooldownBaseSeconds:
+    defaults.ChannelHealthCooldownBaseSeconds ?? COOLDOWN_DEFAULTS.baseSeconds,
+  ChannelHealthCooldownMaxSeconds:
+    defaults.ChannelHealthCooldownMaxSeconds ?? COOLDOWN_DEFAULTS.maxSeconds,
+  ChannelHealthCooldownMaxEjectionPercent:
+    defaults.ChannelHealthCooldownMaxEjectionPercent ??
+    COOLDOWN_DEFAULTS.maxEjectionPercent,
+  ChannelHealthCooldownAlpha:
+    defaults.ChannelHealthCooldownAlpha ?? COOLDOWN_DEFAULTS.alpha,
   ChannelDisableThreshold: defaults.ChannelDisableThreshold ?? '',
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
@@ -283,8 +293,19 @@ const buildFormDefaults = (
 const normalizeDefaults = (
   defaults: RoutingReliabilitySectionProps['defaultValues']
 ): NormalizedRoutingReliabilityValues => ({
-  ...resolveIsolationValues(defaults),
   RetryTimes: defaults.RetryTimes ?? 0,
+  ChannelHealthEnabled: defaults.ChannelHealthEnabled ?? true,
+  ChannelHealthCooldownThreshold:
+    defaults.ChannelHealthCooldownThreshold ?? COOLDOWN_DEFAULTS.threshold,
+  ChannelHealthCooldownBaseSeconds:
+    defaults.ChannelHealthCooldownBaseSeconds ?? COOLDOWN_DEFAULTS.baseSeconds,
+  ChannelHealthCooldownMaxSeconds:
+    defaults.ChannelHealthCooldownMaxSeconds ?? COOLDOWN_DEFAULTS.maxSeconds,
+  ChannelHealthCooldownMaxEjectionPercent:
+    defaults.ChannelHealthCooldownMaxEjectionPercent ??
+    COOLDOWN_DEFAULTS.maxEjectionPercent,
+  ChannelHealthCooldownAlpha:
+    defaults.ChannelHealthCooldownAlpha ?? COOLDOWN_DEFAULTS.alpha,
   ChannelDisableThreshold: (defaults.ChannelDisableThreshold ?? '').trim(),
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
@@ -309,15 +330,14 @@ const normalizeDefaults = (
 const normalizeFormValues = (
   values: RoutingReliabilityFormValues
 ): NormalizedRoutingReliabilityValues => ({
-  CalmFastBase: values.CalmFastBase,
-  CalmFastInterval: values.CalmFastInterval,
-  CalmSlowBase: values.CalmSlowBase,
-  CalmSlowInterval: values.CalmSlowInterval,
-  DormantBase: values.DormantBase,
-  DormantInterval: values.DormantInterval,
-  DormantMaxBase: values.DormantMaxBase,
-  DormantDisableThreshold: values.DormantDisableThreshold,
   RetryTimes: values.RetryTimes,
+  ChannelHealthEnabled: values.ChannelHealthEnabled,
+  ChannelHealthCooldownThreshold: values.ChannelHealthCooldownThreshold,
+  ChannelHealthCooldownBaseSeconds: values.ChannelHealthCooldownBaseSeconds,
+  ChannelHealthCooldownMaxSeconds: values.ChannelHealthCooldownMaxSeconds,
+  ChannelHealthCooldownMaxEjectionPercent:
+    values.ChannelHealthCooldownMaxEjectionPercent,
+  ChannelHealthCooldownAlpha: values.ChannelHealthCooldownAlpha,
   ChannelDisableThreshold: values.ChannelDisableThreshold.trim(),
   AutomaticDisableChannelEnabled: values.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: values.AutomaticEnableChannelEnabled,
@@ -496,163 +516,49 @@ export function RoutingReliabilitySection({
 
           <div className='flex min-w-0 flex-col gap-4'>
             <div className='flex flex-col gap-1'>
-              <h4 className='text-sm font-medium'>{t('Route isolation')}</h4>
-              <p className='text-muted-foreground text-sm'>
-                {t(
-                  'A retry-eligible failure isolates one channel and model pair. Isolation climbs four stages, and each stage repeats three times before the next one begins.'
-                )}
-              </p>
+              <h4 className='text-sm font-medium'>{t('Channel cooldown')}</h4>
             </div>
             <div className='grid min-w-0 gap-6 lg:grid-cols-2'>
               <FormField
                 control={form.control}
-                name='CalmFastBase'
+                name='ChannelHealthEnabled'
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Fast calm base (seconds)')}</FormLabel>
+                  <SettingsSwitchItem className='lg:col-span-2'>
+                    <SettingsSwitchContent>
+                      <FormLabel>{t('Enable channel health routing')}</FormLabel>
+                      <FormDescription>
+                        {t(
+                          'Dynamically adjust channel selection weights based on health. Disabling restores baseline routing and disables cooldown.'
+                        )}
+                      </FormDescription>
+                    </SettingsSwitchContent>
                     <FormControl>
-                      <Input
-                        type='number'
-                        min='0'
-                        step='1'
-                        {...safeNumberFieldProps(field)}
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
                       />
                     </FormControl>
-                    <FormDescription>
-                      {t('Isolation length for the first failure of a route')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+                  </SettingsSwitchItem>
                 )}
               />
 
               <FormField
                 control={form.control}
-                name='CalmFastInterval'
+                name='ChannelHealthCooldownThreshold'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Fast calm step (seconds)')}</FormLabel>
+                    <FormLabel>{t('Cooldown failure threshold')}</FormLabel>
                     <FormControl>
                       <Input
                         type='number'
-                        min='0'
-                        step='1'
-                        {...safeNumberFieldProps(field)}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Added per repeat within the fast calm stage')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name='CalmSlowBase'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Slow calm base (seconds)')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        type='number'
-                        min='0'
-                        step='1'
-                        {...safeNumberFieldProps(field)}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Isolation length once the fast calm stage is exhausted')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name='CalmSlowInterval'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Slow calm step (seconds)')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        type='number'
-                        min='0'
-                        step='1'
-                        {...safeNumberFieldProps(field)}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Added per repeat within the slow calm stage')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name='DormantBase'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Dormant base (seconds)')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        type='number'
-                        min='0'
-                        step='1'
-                        {...safeNumberFieldProps(field)}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Isolation length once both calm stages are exhausted')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name='DormantInterval'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Dormant step (seconds)')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        type='number'
-                        min='0'
-                        step='1'
-                        {...safeNumberFieldProps(field)}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Added per repeat within the dormant stage')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name='DormantMaxBase'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Dormant ceiling (seconds)')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        type='number'
-                        min='0'
+                        min='1'
                         step='1'
                         {...safeNumberFieldProps(field)}
                       />
                     </FormControl>
                     <FormDescription>
                       {t(
-                        'Flat isolation length used for every failure past the dormant stage'
+                        'Consecutive fatal or throttled errors required to trigger channel cooldown (minimum 1)'
                       )}
                     </FormDescription>
                     <FormMessage />
@@ -662,10 +568,35 @@ export function RoutingReliabilitySection({
 
               <FormField
                 control={form.control}
-                name='DormantDisableThreshold'
+                name='ChannelHealthCooldownMaxEjectionPercent'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Auto-disable after dormant recoveries')}</FormLabel>
+                    <FormLabel>{t('Max ejection percentage (%)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        max='100'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Maximum percentage of cooling channels ejected per priority tier (0-100%)'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='ChannelHealthCooldownBaseSeconds'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Cooldown base duration (seconds)')}</FormLabel>
                     <FormControl>
                       <Input
                         type='number'
@@ -676,7 +607,56 @@ export function RoutingReliabilitySection({
                     </FormControl>
                     <FormDescription>
                       {t(
-                        'How many times a route may fail again right after a dormant window before it is disabled. 0 never auto-disables.'
+                        'Initial cooldown duration when a channel enters cooldown'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='ChannelHealthCooldownMaxSeconds'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Cooldown max duration (seconds)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Maximum upper bound for sliding cooldown duration'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='ChannelHealthCooldownAlpha'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Cooldown sliding factor (alpha)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        max='1'
+                        step='0.05'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Decay factor scaling duration across repeated activations (0.0 - 1.0)'
                       )}
                     </FormDescription>
                     <FormMessage />

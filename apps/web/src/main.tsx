@@ -28,8 +28,10 @@ import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'
 import { toast } from 'sonner'
 
+import { RouteLoadingFallback } from '@/components/loading-state'
 import { getStatus } from '@/lib/api'
 import { installBuildMetadata } from '@/lib/build-metadata'
+
 import { applyFaviconToDom } from '@/lib/dom-utils'
 import '@/lib/dayjs'
 import { initializeFrontendCache } from '@/lib/frontend-cache'
@@ -94,11 +96,17 @@ const queryClient = new QueryClient({
 })
 
 // Create a new router instance
+// pending timing must stay in sync with `showDelayMs` in
+// navigation-progress-scheduler.ts so the top bar and the route-level
+// fallback appear together rather than racing.
 const router = createRouter({
   routeTree,
   context: { queryClient },
   defaultPreload: 'intent',
   defaultPreloadStaleTime: 0,
+  defaultPendingComponent: RouteLoadingFallback,
+  defaultPendingMs: 150,
+  defaultPendingMinMs: 200,
 })
 
 // Register the router instance for type safety

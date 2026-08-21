@@ -1002,10 +1002,6 @@ func deleteDisabledChannelWithTx(tx *gorm.DB) (int64, error) {
 	return result.RowsAffected, result.Error
 }
 
-func GetPaginatedTags(offset int, limit int) ([]*string, error) {
-	return GetPaginatedChannelTags(DB.Model(&Channel{}), offset, limit)
-}
-
 func GetPaginatedChannelTags(query *gorm.DB, offset int, limit int) ([]*string, error) {
 	var tags []*string
 	err := query.
@@ -1222,40 +1218,4 @@ func CountChannelTags(query *gorm.DB) (int64, error) {
 	var total int64
 	err := query.Where("tag is not null AND tag != ''").Distinct("tag").Count(&total).Error
 	return total, err
-}
-
-// Get channels of specified type with pagination
-func GetChannelsByType(startIdx int, num int, idSort bool, channelType int) ([]*Channel, error) {
-	var channels []*Channel
-	order := "priority desc"
-	if idSort {
-		order = "id desc"
-	}
-	err := DB.Where("type = ?", channelType).Order(order).Limit(num).Offset(startIdx).Omit("key").Find(&channels).Error
-	return channels, err
-}
-
-// Count channels of specific type
-func CountChannelsByType(channelType int) (int64, error) {
-	var count int64
-	err := DB.Model(&Channel{}).Where("type = ?", channelType).Count(&count).Error
-	return count, err
-}
-
-// Return map[type]count for all channels
-func CountChannelsGroupByType() (map[int64]int64, error) {
-	type result struct {
-		Type  int64 `gorm:"column:type"`
-		Count int64 `gorm:"column:count"`
-	}
-	var results []result
-	err := DB.Model(&Channel{}).Select("type, count(*) as count").Group("type").Find(&results).Error
-	if err != nil {
-		return nil, err
-	}
-	counts := make(map[int64]int64)
-	for _, r := range results {
-		counts[r.Type] = r.Count
-	}
-	return counts, nil
 }

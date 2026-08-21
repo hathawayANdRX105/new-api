@@ -147,11 +147,6 @@ func GetVendorModelCounts() (map[int64]int64, error) {
 	return m, nil
 }
 
-func GetAllModels(offset int, limit int) ([]*Model, error) {
-	models, _, err := SearchModels("", "", "", "", offset, limit)
-	return models, err
-}
-
 func GetBoundChannelsByModelsMap(modelNames []string) (map[string][]BoundChannel, error) {
 	result := make(map[string][]BoundChannel)
 	if len(modelNames) == 0 {

@@ -2,7 +2,6 @@ package model
 
 import (
 	"testing"
-	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -66,7 +65,8 @@ func TestGetChannelUsesSharedWeightFormula(t *testing.T) {
 		ability(9502, group, modelName, 1, 100),
 	})
 
-	ClearRouteHealthCache()
+	resetHealthManager()
+	setTestConfig(true, 0.3, 0.05, 0)
 
 	counts := map[int]int{}
 	for range 600 {
@@ -96,7 +96,8 @@ func TestGetChannelRespectsExcludeSet(t *testing.T) {
 		ability(9602, group, modelName, 10, 100),
 	})
 
-	ClearRouteHealthCache()
+	resetHealthManager()
+	setTestConfig(true, 0.3, 0.05, 0)
 
 	for range 50 {
 		got, err := GetChannel(group, modelName, 0, "", map[int]bool{9601: true})
@@ -111,38 +112,33 @@ func TestGetChannelRespectsExcludeSet(t *testing.T) {
 	assert.Nil(t, got)
 }
 
-// TestGetChannelSkipsIsolatedRoutes proves the state machine reaches the DB path:
-// a (channel, model) route in timed isolation must lose every pick, while an
-// unrelated model on the same channel keeps competing.
-func TestGetChannelSkipsIsolatedRoutes(t *testing.T) {
+// TestGetChannelAppliesHealthScore proves the EWMA factor reaches the DB path,
+// which is the whole point of routing weight being computed in one place.
+func TestGetChannelAppliesHealthScore(t *testing.T) {
 	const group, modelName = "db-group", "db-model"
 
 	withAbilityDB(t, group, modelName, []Ability{
 		ability(9701, group, modelName, 10, 100),
 		ability(9702, group, modelName, 10, 100),
 	})
-	require.NoError(t, DB.AutoMigrate(&ChannelModelHealth{}))
-	ClearRouteHealthCache()
-	t.Cleanup(ClearRouteHealthCache)
-	// The selectors read the real clock, so the isolation window must be live.
-	now := time.Now()
-	require.NoError(t, RecordRetryableFailure(RouteKey{ChannelId: 9702, Model: modelName}, "bad_response", now))
 
+	mgr := resetHealthManager()
+	setTestConfig(true, 0.3, 0.05, 0)
 	for range 50 {
-		got, err := GetChannel(group, modelName, 0, "", nil)
-		require.NoError(t, err)
-		require.NotNil(t, got)
-		assert.Equal(t, 9701, got.Id, "an isolated route must never be selected")
+		mgr.RecordChannelOutcome(9702, OutcomeFatal)
 	}
+	require.InDelta(t, 0.05, mgr.GetScore(9702), 1e-9)
 
-	// Admin recovery clears the ladder, so the route competes again immediately.
-	require.NoError(t, RecoverRoute(RouteKey{ChannelId: 9702, Model: modelName}, now))
 	counts := map[int]int{}
-	for range 400 {
+	for range 600 {
 		got, err := GetChannel(group, modelName, 0, "", nil)
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		counts[got.Id]++
 	}
-	assert.Positive(t, counts[9702], "a recovered route is selectable again")
+
+	assert.Greater(t, counts[9701], counts[9702]*5,
+		"the degraded channel must lose share on the DB path")
+	assert.Positive(t, counts[9702],
+		"but the MinScore floor keeps it selectable rather than locking it out")
 }

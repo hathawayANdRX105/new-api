@@ -20,10 +20,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRight,
-  AlertCircle,
   Boxes,
-  CheckCircle2,
-  Circle,
   ClipboardPaste,
   HelpCircle,
   KeyRound,
@@ -51,6 +48,8 @@ import {
   useCallback,
   useRef,
 } from 'react'
+import { createPortal } from 'react-dom'
+
 import { type SubmitErrorHandler, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -60,7 +59,7 @@ import {
   sideDrawerFooterClassName,
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
-  sideDrawerSectionClassName,
+
   sideDrawerSwitchItemClassName,
 } from '@/components/drawer-layout'
 import { JsonCodeEditor } from '@/components/json-code-editor'
@@ -184,7 +183,6 @@ import { ParamOverrideEditorDialog } from '../dialogs/param-override-editor-dial
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
 import { ModelMappingEditor } from '../model-mapping-editor'
 import {
-  ChannelAdvancedSection,
   ChannelApiAccessSection,
   ChannelAuthSection,
   ChannelBasicSection,
@@ -200,6 +198,8 @@ type ChannelMutateDrawerProps = {
   currentRow?: Channel | null
   presentation?: ChannelEditorPresentation
   formId?: string
+  actionsContainer?: HTMLElement | null
+
 }
 
 type ModelMappingGuardrail = {
@@ -211,22 +211,16 @@ type ModelMappingGuardrail = {
 
 type ChannelEditorSectionStatus = 'complete' | 'configured' | 'error' | 'idle'
 
-type ChannelEditorNavChildItem = {
-  id: string
-  title: string
-  configured?: boolean
-}
 
 type ChannelEditorNavItem = {
   id: string
   title: string
   description?: string
-  statusLabel: string
   status: ChannelEditorSectionStatus
   icon: ReactNode
   configured?: boolean
-  children?: ChannelEditorNavChildItem[]
 }
+
 
 // Helper functions
 const createEmptyModelMappingGuardrail = (): ModelMappingGuardrail => ({
@@ -244,19 +238,11 @@ const MODEL_MAPPING_PREVIEW_FALLBACK: Array<{
   target: string
 }> = [{ source: 'client-model', target: 'upstream-model' }]
 
-const ADVANCED_SETTINGS_EXPANDED_KEY = 'channel-advanced-settings-expanded'
 const CHANNEL_EDITOR_SECTION_IDS = {
   identity: 'channel-section-identity',
   credentials: 'channel-section-credentials',
   models: 'channel-section-models',
-  advanced: 'channel-section-advanced',
 } as const
-const CHANNEL_EDITOR_MAIN_SECTION_IDS = [
-  CHANNEL_EDITOR_SECTION_IDS.identity,
-  CHANNEL_EDITOR_SECTION_IDS.credentials,
-  CHANNEL_EDITOR_SECTION_IDS.models,
-  CHANNEL_EDITOR_SECTION_IDS.advanced,
-]
 const ADVANCED_SETTINGS_SECTION_IDS = {
   routingStrategy: 'channel-section-advanced-routing-strategy',
   internalNotes: 'channel-section-advanced-internal-notes',
@@ -265,9 +251,12 @@ const ADVANCED_SETTINGS_SECTION_IDS = {
   fieldPassthrough: 'channel-section-advanced-field-passthrough',
   upstreamModelDetection: 'channel-section-advanced-upstream-model-detection',
 } as const
-const ADVANCED_SETTINGS_CHILD_SECTION_IDS: string[] = Object.values(
-  ADVANCED_SETTINGS_SECTION_IDS
-)
+const CHANNEL_EDITOR_MAIN_SECTION_IDS = [
+  CHANNEL_EDITOR_SECTION_IDS.identity,
+  CHANNEL_EDITOR_SECTION_IDS.credentials,
+  CHANNEL_EDITOR_SECTION_IDS.models,
+  ...Object.values(ADVANCED_SETTINGS_SECTION_IDS),
+]
 const ADVANCED_CUSTOM_ROUTE_TYPE_PREVIEW_LIMIT = 3
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8
 const SENSITIVE_FORM_FIELDS = [
@@ -307,11 +296,6 @@ const SENSITIVE_FORM_FIELDS = [
   'upstream_model_update_ignored_models',
 ] satisfies (keyof ChannelFormValues)[]
 
-function readAdvancedSettingsPreference(): boolean {
-  if (typeof window === 'undefined') return false
-  return window.localStorage.getItem(ADVANCED_SETTINGS_EXPANDED_KEY) === 'true'
-}
-
 function hasConfiguredOverrideValue(value: unknown): boolean {
   if (typeof value !== 'string') return false
 
@@ -328,32 +312,6 @@ function hasConfiguredOverrideValue(value: unknown): boolean {
   }
 
   return true
-}
-
-function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
-  return Boolean(
-    hasConfiguredOverrideValue(values.param_override) ||
-    hasConfiguredOverrideValue(values.header_override) ||
-    values.advanced_custom?.trim() ||
-    hasConfiguredOverrideValue(values.status_code_mapping) ||
-    values.tag?.trim() ||
-    values.remark?.trim() ||
-    values.priority ||
-    values.weight ||
-    values.proxy?.trim() ||
-    values.system_prompt?.trim() ||
-    values.force_format ||
-    values.thinking_to_content ||
-    values.pass_through_body_enabled ||
-    values.system_prompt_override ||
-    (values.http_protocol && values.http_protocol !== 'auto') ||
-    (values.http2_connection_shards != null &&
-      values.http2_connection_shards > 1) ||
-    values.claude_beta_query ||
-    values.upstream_model_update_check_enabled ||
-    values.upstream_model_update_auto_sync_enabled ||
-    values.upstream_model_update_ignored_models?.trim()
-  )
 }
 
 function parseSettingsRecord(
@@ -417,11 +375,7 @@ function configuredAdvancedSectionClassName(
   className: string,
   configured: boolean
 ) {
-  return cn(
-    className,
-    'border-border/60 rounded-lg border p-3 transition-colors',
-    configured && 'border-primary/35 ring-primary/20 ring-1'
-  )
+  return cn(className, configured && 'ring-primary/20 ring-1')
 }
 
 function ChannelTypeLogo(props: {
@@ -453,15 +407,6 @@ function ChannelTypeLogo(props: {
   )
 }
 
-function getSectionStatusIcon(status: ChannelEditorSectionStatus): ReactNode {
-  if (status === 'error') {
-    return <AlertCircle className='h-3.5 w-3.5' aria-hidden='true' />
-  }
-  if (status === 'complete' || status === 'configured') {
-    return <CheckCircle2 className='h-3.5 w-3.5' aria-hidden='true' />
-  }
-  return <Circle className='h-3.5 w-3.5' aria-hidden='true' />
-}
 
 function getCompletionStatus(
   hasErrors: boolean,
@@ -489,12 +434,11 @@ function ChannelEditorNav(props: {
   navigationLabel: string
   items: ChannelEditorNavItem[]
   activeItemId?: string
-  expandedItemId?: string
   onNavigate: (targetId: string) => void
 }) {
   return (
     <aside className='hidden self-start lg:sticky lg:top-4 lg:z-20 lg:block'>
-      <div className='flex max-h-[calc(100dvh-12rem)] flex-col gap-3 overflow-y-auto overscroll-contain pr-1'>
+      <div className='flex max-h-[calc(100dvh-10rem)] flex-col gap-3 overflow-y-auto overscroll-contain pr-1'>
         <div className='border-border/60 bg-muted/20 rounded-lg border p-3'>
           <div className='flex min-w-0 items-center gap-2'>
             <span className='bg-background flex size-8 shrink-0 items-center justify-center rounded-md border'>
@@ -517,89 +461,41 @@ function ChannelEditorNav(props: {
         >
           {props.items.map((item) => {
             const isError = item.status === 'error'
-            const isDone =
-              item.status === 'complete' || item.status === 'configured'
             const isConfigured = Boolean(item.configured)
             const isActive = props.activeItemId === item.id
-            const isExpanded = props.expandedItemId === item.id
             return (
-              <div key={item.id}>
-                <button
-                  type='button'
-                  className={cn(
-                    'hover:bg-muted/60 flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors',
-                    isActive && 'bg-muted/70',
-                    isConfigured && !isError && 'text-primary',
-                    isError && 'text-destructive hover:bg-destructive/10'
-                  )}
-                  onClick={() => props.onNavigate(item.id)}
-                  aria-current={isActive ? 'true' : undefined}
-                >
-                  <span
-                    className={cn(
-                      'bg-muted text-muted-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md',
-                      isConfigured && !isError && 'bg-primary/10 text-primary',
-                      isError && 'bg-destructive/10 text-destructive',
-                      isDone && !isError && 'text-primary'
-                    )}
-                  >
-                    {item.icon}
-                  </span>
-                  <span className='min-w-0 flex-1'>
-                    <span className='block truncate text-sm font-medium'>
-                      {item.title}
-                    </span>
-                    {item.description && (
-                      <span className='text-muted-foreground block truncate text-xs'>
-                        {item.description}
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    className={cn(
-                      'text-muted-foreground mt-1 shrink-0',
-                      isError && 'text-destructive',
-                      isDone && !isError && 'text-primary',
-                      isConfigured && !isError && 'pt-1.5'
-                    )}
-                    aria-label={item.statusLabel}
-                  >
-                    {isConfigured && !isError && !isDone ? (
-                      <span
-                        className='bg-success block size-2 rounded-full'
-                        aria-hidden='true'
-                      />
-                    ) : (
-                      getSectionStatusIcon(item.status)
-                    )}
-                  </span>
-                </button>
-                {item.children && isExpanded && (
-                  <div className='border-border/60 ml-5 flex flex-col gap-0.5 border-l py-1 pl-3'>
-                    {item.children.map((child) => (
-                      <button
-                        key={child.id}
-                        type='button'
-                        className={cn(
-                          'text-muted-foreground hover:bg-muted/50 hover:text-foreground flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors',
-                          child.configured && 'text-primary'
-                        )}
-                        onClick={() => props.onNavigate(child.id)}
-                      >
-                        <span className='min-w-0 flex-1 truncate'>
-                          {child.title}
-                        </span>
-                        {child.configured && (
-                          <span
-                            className='bg-success size-1.5 shrink-0 rounded-full'
-                            aria-hidden='true'
-                          />
-                        )}
-                      </button>
-                    ))}
-                  </div>
+              <button
+                key={item.id}
+                type='button'
+                className={cn(
+                  'hover:bg-muted/60 flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors',
+                  isActive && 'bg-muted/70',
+                  isConfigured && !isError && 'text-primary',
+                  isError && 'text-destructive hover:bg-destructive/10'
                 )}
-              </div>
+                onClick={() => props.onNavigate(item.id)}
+                aria-current={isActive ? 'true' : undefined}
+              >
+                <span
+                  className={cn(
+                    'bg-muted text-muted-foreground mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md',
+                    isConfigured && !isError && 'bg-primary/10 text-primary',
+                    isError && 'bg-destructive/10 text-destructive'
+                  )}
+                >
+                  {item.icon}
+                </span>
+                <span className='min-w-0 flex-1'>
+                  <span className='block truncate text-sm font-medium'>
+                    {item.title}
+                  </span>
+                  {item.description && (
+                    <span className='text-muted-foreground block truncate text-xs'>
+                      {item.description}
+                    </span>
+                  )}
+                </span>
+              </button>
             )
           })}
         </nav>
@@ -608,17 +504,22 @@ function ChannelEditorNav(props: {
   )
 }
 
-export function ChannelMutateDrawer({
+export function ChannelMutateDrawer(props: ChannelMutateDrawerProps) {
+  if (props.presentation !== 'inline' && !props.open) return null
+  return <ChannelMutateDrawerContent {...props} />
+}
+
+function ChannelMutateDrawerContent({
   open,
   onOpenChange,
   currentRow,
   presentation,
   formId,
+  actionsContainer,
 }: ChannelMutateDrawerProps) {
-  if (!open) return null
   const { t } = useTranslation()
   const isInline = presentation === 'inline'
-  const isPresented = isInline || Boolean(open)
+  const isPresented = Boolean(open)
   const editorFormId = formId ?? 'channel-form'
   const queryClient = useQueryClient()
   const { setOpen } = useChannels()
@@ -650,19 +551,14 @@ export function ChannelMutateDrawer({
     ((action: MissingModelsAction) => void) | null
   >(null)
   const channelFormRef = useRef<HTMLFormElement>(null)
-  const advancedNavScrollPendingRef = useRef(false)
+  const editorScrollContainerRef = useRef<HTMLElement | null>(null)
   const [activeEditorSectionId, setActiveEditorSectionId] = useState<string>(
     CHANNEL_EDITOR_SECTION_IDS.identity
   )
-  const [expandedEditorNavItemId, setExpandedEditorNavItemId] = useState<
-    string | undefined
-  >()
-  const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false)
+
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
   const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
     useState(false)
-  const [clipboardConnectionInfo, setClipboardConnectionInfo] =
-    useState<ChannelConnectionInfo | null>(null)
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
@@ -709,8 +605,6 @@ export function ChannelMutateDrawer({
     switchMethod: switchVerificationMethod,
   } = useSecureVerification()
 
-
-
   // Check if this is a multi-key channel
   const isMultiKeyChannel =
     isEditing && channelData?.data?.channel_info?.is_multi_key === true
@@ -723,11 +617,8 @@ export function ChannelMutateDrawer({
 
   const resetEditorState = useCallback(() => {
     form.reset(CHANNEL_FORM_DEFAULT_VALUES)
-    advancedNavScrollPendingRef.current = false
     setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.identity)
-    setExpandedEditorNavItemId(undefined)
-    setAdvancedSettingsOpen(false)
-    setClipboardConnectionInfo(null)
+
   }, [form])
 
   // Watch form values for conditional rendering (useWatch for precise per-field subscription)
@@ -800,7 +691,6 @@ export function ChannelMutateDrawer({
         shouldDirty: true,
         shouldValidate: true,
       })
-      setClipboardConnectionInfo(null)
       toast.success(t('Connection info filled in'))
     },
     [form, t]
@@ -825,31 +715,6 @@ export function ChannelMutateDrawer({
     }
   }, [applyConnectionInfo, t])
 
-  useEffect(() => {
-    if (!isPresented || isEditing) {
-      setClipboardConnectionInfo(null)
-      return
-    }
-
-    if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) {
-      return
-    }
-
-    let cancelled = false
-    void navigator.clipboard
-      .readText()
-      .then((text) => {
-        if (cancelled) return
-        setClipboardConnectionInfo(parseChannelConnectionInfo(text))
-      })
-      .catch(() => {
-        /* Clipboard detection is best-effort on drawer open. */
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [isEditing, isPresented])
 
   // Helper computed values
   const isBatchMode =
@@ -1001,95 +866,99 @@ export function ChannelMutateDrawer({
   const advancedStatus: ChannelEditorSectionStatus = advancedHaveErrors
     ? 'error'
     : 'idle'
-  const advancedSummary = advancedHaveErrors ? t('Error') : undefined
+
   const routingStrategyConfigured = Boolean(
     currentPriority ||
-    currentWeight ||
-    currentTestModel?.trim() ||
-    (currentAutoBan ?? 1) !== 1
+      currentWeight ||
+      currentTestModel?.trim() ||
+      (currentAutoBan ?? 1) !== 1
   )
   const internalNotesConfigured = Boolean(
     currentTag?.trim() || currentRemark?.trim()
   )
   const overrideRulesConfigured = Boolean(
     hasConfiguredOverrideValue(currentStatusCodeMapping) ||
-    hasConfiguredOverrideValue(currentParamOverride) ||
-    hasConfiguredOverrideValue(currentHeaderOverride)
+      hasConfiguredOverrideValue(currentParamOverride) ||
+      hasConfiguredOverrideValue(currentHeaderOverride)
   )
   const extraSettingsConfigured = Boolean(
     currentForceFormat ||
-    currentThinkingToContent ||
-    currentPassThroughBodyEnabled ||
-    currentDisableTaskPollingSleep ||
-    currentProxy?.trim() ||
-    currentSystemPrompt?.trim() ||
-    currentSystemPromptOverride ||
-    (currentHttpProtocol && currentHttpProtocol !== 'auto') ||
-    (currentHttp2ConnectionShards != null && currentHttp2ConnectionShards > 1)
+      currentThinkingToContent ||
+      currentPassThroughBodyEnabled ||
+      currentDisableTaskPollingSleep ||
+      currentProxy?.trim() ||
+      currentSystemPrompt?.trim() ||
+      currentSystemPromptOverride ||
+      (currentHttpProtocol && currentHttpProtocol !== 'auto') ||
+      (currentHttp2ConnectionShards != null && currentHttp2ConnectionShards > 1)
   )
   let fieldPassthroughConfigured = false
   if (currentType === 1 || currentType === 57) {
     fieldPassthroughConfigured = Boolean(
       currentAllowServiceTier ||
-      currentDisableStore ||
-      currentAllowSafetyIdentifier ||
-      currentAllowIncludeObfuscation ||
-      currentAllowInferenceGeo
+        currentDisableStore ||
+        currentAllowSafetyIdentifier ||
+        currentAllowIncludeObfuscation ||
+        currentAllowInferenceGeo
     )
   } else if (currentType === 14) {
     fieldPassthroughConfigured = Boolean(
       currentAllowServiceTier ||
-      currentAllowInferenceGeo ||
-      currentAllowSpeed ||
-      currentClaudeBetaQuery
+        currentAllowInferenceGeo ||
+        currentAllowSpeed ||
+        currentClaudeBetaQuery
     )
   }
   const upstreamModelDetectionConfigured = Boolean(
     upstreamModelUpdateCheckEnabled ||
-    currentUpstreamModelUpdateAutoSyncEnabled ||
-    currentUpstreamModelUpdateIgnoredModels?.trim()
+      currentUpstreamModelUpdateAutoSyncEnabled ||
+      currentUpstreamModelUpdateIgnoredModels?.trim()
   )
-  const advancedConfigured = Boolean(
-    routingStrategyConfigured ||
-    internalNotesConfigured ||
-    overrideRulesConfigured ||
-    extraSettingsConfigured ||
-    fieldPassthroughConfigured ||
-    upstreamModelDetectionConfigured
-  )
-  const advancedNavChildren: ChannelEditorNavChildItem[] = [
+  const advancedNavItems: ChannelEditorNavItem[] = [
     {
       id: ADVANCED_SETTINGS_SECTION_IDS.routingStrategy,
       title: t('Routing Strategy'),
+      status: advancedStatus,
+      icon: <Route className='h-4 w-4' aria-hidden='true' />,
       configured: routingStrategyConfigured,
     },
     {
       id: ADVANCED_SETTINGS_SECTION_IDS.internalNotes,
       title: t('Internal Notes'),
+      status: advancedStatus,
+      icon: <FileText className='h-4 w-4' aria-hidden='true' />,
       configured: internalNotesConfigured,
     },
     {
       id: ADVANCED_SETTINGS_SECTION_IDS.overrideRules,
       title: t('Override Rules'),
+      status: advancedStatus,
+      icon: <Code className='h-4 w-4' aria-hidden='true' />,
       configured: overrideRulesConfigured,
     },
     {
       id: ADVANCED_SETTINGS_SECTION_IDS.extraSettings,
       title: t('Channel Extra Settings'),
+      status: advancedStatus,
+      icon: <Settings className='h-4 w-4' aria-hidden='true' />,
       configured: extraSettingsConfigured,
     },
   ]
   if (currentType === 1 || currentType === 14 || currentType === 57) {
-    advancedNavChildren.push({
+    advancedNavItems.push({
       id: ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough,
       title: t('Field passthrough controls'),
+      status: advancedStatus,
+      icon: <SlidersHorizontal className='h-4 w-4' aria-hidden='true' />,
       configured: fieldPassthroughConfigured,
     })
   }
   if (MODEL_FETCHABLE_TYPES.has(currentType)) {
-    advancedNavChildren.push({
+    advancedNavItems.push({
       id: ADVANCED_SETTINGS_SECTION_IDS.upstreamModelDetection,
       title: t('Upstream Model Detection Settings'),
+      status: advancedStatus,
+      icon: <RefreshCw className='h-4 w-4' aria-hidden='true' />,
       configured: upstreamModelDetectionConfigured,
     })
   }
@@ -1098,7 +967,6 @@ export function ChannelMutateDrawer({
       id: CHANNEL_EDITOR_SECTION_IDS.identity,
       title: t('Basic Information'),
       description: getSectionStatusLabel(identityStatus, t),
-      statusLabel: getSectionStatusLabel(identityStatus, t),
       status: identityStatus,
       icon: <Server className='h-4 w-4' aria-hidden='true' />,
     },
@@ -1106,7 +974,6 @@ export function ChannelMutateDrawer({
       id: CHANNEL_EDITOR_SECTION_IDS.credentials,
       title: t('Credentials'),
       description: getSectionStatusLabel(credentialsStatus, t),
-      statusLabel: getSectionStatusLabel(credentialsStatus, t),
       status: credentialsStatus,
       icon: <KeyRound className='h-4 w-4' aria-hidden='true' />,
     },
@@ -1114,20 +981,10 @@ export function ChannelMutateDrawer({
       id: CHANNEL_EDITOR_SECTION_IDS.models,
       title: t('Models & Groups'),
       description: getSectionStatusLabel(modelsStatus, t),
-      statusLabel: getSectionStatusLabel(modelsStatus, t),
       status: modelsStatus,
       icon: <Boxes className='h-4 w-4' aria-hidden='true' />,
     },
-    {
-      id: CHANNEL_EDITOR_SECTION_IDS.advanced,
-      title: t('Advanced Settings'),
-      description: advancedSummary,
-      statusLabel: advancedSummary ?? t('Advanced Settings'),
-      status: advancedStatus,
-      icon: <Settings className='h-4 w-4' aria-hidden='true' />,
-      configured: advancedConfigured,
-      children: advancedNavChildren,
-    },
+    ...advancedNavItems,
   ]
 
   // Extract redirect models from model_mapping (target values)
@@ -1249,9 +1106,7 @@ export function ChannelMutateDrawer({
     if (isEditing && channelData?.data) {
       const defaults = transformChannelToFormDefaults(channelData.data)
       form.reset(defaults)
-      setAdvancedSettingsOpen(
-        readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
-      )
+
       // Store initial values for comparison
       initialModelsRef.current = parseModelsString(
         channelData.data.models || ''
@@ -1261,7 +1116,7 @@ export function ChannelMutateDrawer({
         channelData.data.status_code_mapping || ''
     } else if (!isEditing && !isInline) {
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
-      setAdvancedSettingsOpen(false)
+
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
@@ -1735,58 +1590,60 @@ export function ChannelMutateDrawer({
     ]
   )
 
-  const handleAdvancedSettingsOpenChange = useCallback((nextOpen: boolean) => {
-    if (!nextOpen) {
-      advancedNavScrollPendingRef.current = false
-      setExpandedEditorNavItemId(undefined)
+
+
+  const getEditorScrollContainer = useCallback(() => {
+    const formElement = channelFormRef.current
+    if (!formElement) return null
+
+    let scroller = formElement.parentElement
+    while (scroller) {
+      const { overflowY } = window.getComputedStyle(scroller)
+      if (overflowY === 'auto' || overflowY === 'scroll') {
+        return scroller
+      }
+      scroller = scroller.parentElement
     }
-    setAdvancedSettingsOpen(nextOpen)
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(
-        ADVANCED_SETTINGS_EXPANDED_KEY,
-        String(nextOpen)
-      )
-    }
+
+    return formElement
   }, [])
 
   const handleEditorNavNavigate = useCallback(
     (targetId: string) => {
-      const isAdvancedTarget =
-        targetId === CHANNEL_EDITOR_SECTION_IDS.advanced ||
-        ADVANCED_SETTINGS_CHILD_SECTION_IDS.includes(targetId)
+      setActiveEditorSectionId(targetId)
+      const targetElement = document.querySelector<HTMLElement>(`#${targetId}`)
+      const scroller =
+        editorScrollContainerRef.current ?? getEditorScrollContainer()
+      if (!targetElement || !scroller) return
+      editorScrollContainerRef.current = scroller
 
-      if (isAdvancedTarget) {
-        advancedNavScrollPendingRef.current = true
-        handleAdvancedSettingsOpenChange(true)
-        setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.advanced)
-        setExpandedEditorNavItemId(CHANNEL_EDITOR_SECTION_IDS.advanced)
-      } else {
-        advancedNavScrollPendingRef.current = false
-        setActiveEditorSectionId(targetId)
-        setExpandedEditorNavItemId(undefined)
-      }
-
-      const scrollTargetIntoView = () => {
-        document
-          .querySelector<HTMLElement>(`#${targetId}`)
-          ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-
-      if (isAdvancedTarget && !advancedSettingsOpen) {
-        window.requestAnimationFrame(scrollTargetIntoView)
-        return
-      }
-
-      scrollTargetIntoView()
+      const scrollerTop = scroller.getBoundingClientRect().top
+      const targetTop = targetElement.getBoundingClientRect().top
+      scroller.scrollTo({
+        top: Math.max(0, scroller.scrollTop + targetTop - scrollerTop - 16),
+        behavior: 'auto',
+      })
     },
-    [advancedSettingsOpen, handleAdvancedSettingsOpenChange]
+    [getEditorScrollContainer]
   )
 
   const updateActiveEditorSection = useCallback(() => {
-    const formElement = channelFormRef.current
-    if (!formElement) return
+    const scroller = editorScrollContainerRef.current
+    if (!scroller) return
 
-    const activationY = formElement.getBoundingClientRect().top + 80
+    const lastSectionId =
+      CHANNEL_EDITOR_MAIN_SECTION_IDS[CHANNEL_EDITOR_MAIN_SECTION_IDS.length - 1]
+    if (
+      lastSectionId &&
+      scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4
+    ) {
+      setActiveEditorSectionId((current) =>
+        current === lastSectionId ? current : lastSectionId
+      )
+      return
+    }
+
+    const scrollerTop = scroller.getBoundingClientRect().top
     let nextActiveSectionId: string = CHANNEL_EDITOR_SECTION_IDS.identity
 
     for (const sectionId of CHANNEL_EDITOR_MAIN_SECTION_IDS) {
@@ -1794,7 +1651,9 @@ export function ChannelMutateDrawer({
         `#${sectionId}`
       )
       if (!sectionElement) continue
-      if (sectionElement.getBoundingClientRect().top <= activationY) {
+      const sectionTopInScroller =
+        sectionElement.getBoundingClientRect().top - scrollerTop
+      if (sectionTopInScroller <= 80) {
         nextActiveSectionId = sectionId
       } else {
         break
@@ -1804,43 +1663,39 @@ export function ChannelMutateDrawer({
     setActiveEditorSectionId((current) =>
       current === nextActiveSectionId ? current : nextActiveSectionId
     )
-
-    if (nextActiveSectionId === CHANNEL_EDITOR_SECTION_IDS.advanced) {
-      advancedNavScrollPendingRef.current = false
-      setExpandedEditorNavItemId(CHANNEL_EDITOR_SECTION_IDS.advanced)
-      if (!advancedSettingsOpen) {
-        handleAdvancedSettingsOpenChange(true)
-      }
-    } else if (!advancedNavScrollPendingRef.current) {
-      setExpandedEditorNavItemId(undefined)
-    }
-  }, [advancedSettingsOpen, handleAdvancedSettingsOpenChange])
+  }, [])
 
   useEffect(() => {
     if (!isPresented || isChannelDetailLoading) return
-    const formElement = channelFormRef.current
-    if (!formElement) return
+    const scroller = getEditorScrollContainer()
+    if (!scroller) return
 
+    editorScrollContainerRef.current = scroller
     updateActiveEditorSection()
-    formElement.addEventListener('scroll', updateActiveEditorSection, {
+    scroller.addEventListener('scroll', updateActiveEditorSection, {
       passive: true,
     })
     window.addEventListener('resize', updateActiveEditorSection)
 
     return () => {
-      formElement.removeEventListener('scroll', updateActiveEditorSection)
+      scroller.removeEventListener('scroll', updateActiveEditorSection)
       window.removeEventListener('resize', updateActiveEditorSection)
+      if (editorScrollContainerRef.current === scroller) {
+        editorScrollContainerRef.current = null
+      }
     }
-  }, [isChannelDetailLoading, isPresented, updateActiveEditorSection])
+  }, [
+    getEditorScrollContainer,
+    isChannelDetailLoading,
+    isPresented,
+    updateActiveEditorSection,
+  ])
 
   const onInvalid: SubmitErrorHandler<ChannelFormValues> = useCallback(
-    (errors) => {
-      if (hasAdvancedSettingsErrors(errors)) {
-        handleAdvancedSettingsOpenChange(true)
-      }
+    () => {
       toast.error(t('Please fix the highlighted fields before saving'))
     },
-    [handleAdvancedSettingsOpenChange, t]
+    [t]
   )
 
   // Handle drawer close
@@ -1854,6 +1709,47 @@ export function ChannelMutateDrawer({
     [onOpenChange, resetEditorState]
   )
 
+  const editorActions = (!isEditing || isInline) ? (
+    <div className='flex w-full flex-wrap items-center justify-center gap-2 sm:w-auto sm:justify-end'>
+      {!isEditing && (
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          className='shrink-0'
+          onClick={pasteConnectionInfoFromClipboard}
+        >
+          <ClipboardPaste className='size-4' />
+          <span>{t('Paste Connection Info')}</span>
+        </Button>
+      )}
+      {isInline && (
+        <>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            disabled={isSubmitting}
+            onClick={() => handleOpenChange(false)}
+          >
+            {t('Cancel')}
+          </Button>
+          <Button
+            form={editorFormId}
+            type='submit'
+            size='sm'
+            disabled={isSubmitting}
+          >
+            {isSubmitting && (
+              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+            )}
+            {isEditing ? t('Update Channel') : t('Save changes')}
+          </Button>
+        </>
+      )}
+    </div>
+  ) : null
+
   return (
     <>
       <Sheet
@@ -1866,75 +1762,39 @@ export function ChannelMutateDrawer({
           inline={isInline}
           className={cn(
             isInline
-              ? 'bg-background text-foreground flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border shadow-none'
+              ? 'bg-background text-foreground flex min-h-0 flex-1 flex-col overflow-visible rounded-lg shadow-none'
               : sideDrawerContentClassName('sm:max-w-5xl')
           )}
         >
-          <SheetHeader className={sideDrawerHeaderClassName()}>
-            <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
-              <div className='min-w-0'>
-                {isInline ? (
-                  <>
-                    <h2 className='flex items-center gap-3 text-base font-medium'>
-                      <IconBadge tone='info' size='title'>
-                        <ChannelTypeLogo type={currentType} size={22} />
-                      </IconBadge>
-                      <span>
-                        {isEditing ? t('Edit Channel') : t('Create Channel')}
-                        <span className='text-muted-foreground ml-2 text-sm font-normal'>
-                          {t(currentTypeLabel)}
-                        </span>
+          {!isInline && (
+            <SheetHeader className={sideDrawerHeaderClassName()}>
+              <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
+                <div className='min-w-0'>
+                  <SheetTitle className='flex items-center gap-3'>
+                    <IconBadge tone='info' size='title'>
+                      <ChannelTypeLogo type={currentType} size={22} />
+                    </IconBadge>
+                    <span>
+                      {isEditing ? t('Edit Channel') : t('Create Channel')}
+                      <span className='text-muted-foreground ml-2 text-sm font-normal'>
+                        {t(currentTypeLabel)}
                       </span>
-                    </h2>
-                    <p className='text-muted-foreground mt-1 text-sm'>
-                      {isEditing
-                        ? t(
-                            "Update channel configuration and click save when you're done."
-                          )
-                        : t(
-                            'Add a new channel by providing the necessary information.'
-                          )}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <SheetTitle className='flex items-center gap-3'>
-                      <IconBadge tone='info' size='title'>
-                        <ChannelTypeLogo type={currentType} size={22} />
-                      </IconBadge>
-                      <span>
-                        {isEditing ? t('Edit Channel') : t('Create Channel')}
-                        <span className='text-muted-foreground ml-2 text-sm font-normal'>
-                          {t(currentTypeLabel)}
-                        </span>
-                      </span>
-                    </SheetTitle>
-                    <SheetDescription className='mt-1'>
-                      {isEditing
-                        ? t(
-                            "Update channel configuration and click save when you're done."
-                          )
-                        : t(
-                            'Add a new channel by providing the necessary information.'
-                          )}
-                    </SheetDescription>
-                  </>
-                )}
+                    </span>
+                  </SheetTitle>
+                  <SheetDescription className='mt-1'>
+                    {isEditing
+                      ? t(
+                          "Update channel configuration and click save when you're done."
+                        )
+                      : t(
+                          'Add a new channel by providing the necessary information.'
+                        )}
+                  </SheetDescription>
+                </div>
+                {editorActions}
               </div>
-              {!isEditing && (
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  className='shrink-0'
-                  onClick={pasteConnectionInfoFromClipboard}
-                >
-                  <ClipboardPaste className='size-4' />
-                  <span>{t('Paste Connection Info')}</span>
-                </Button>
-              )}
-            </div>
-          </SheetHeader>
+            </SheetHeader>
+          )}
 
           {sensitiveLocked && (
             <Alert className='border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
@@ -1949,42 +1809,22 @@ export function ChannelMutateDrawer({
             </Alert>
           )}
 
-          {!isEditing && clipboardConnectionInfo && (
-            <Alert>
-              <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-                <span>{t('Connection info detected in clipboard')}</span>
-                <span className='flex shrink-0 gap-2'>
-                  <Button
-                    type='button'
-                    size='sm'
-                    onClick={() => applyConnectionInfo(clipboardConnectionInfo)}
-                  >
-                    {t('Fill in')}
-                  </Button>
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='sm'
-                    onClick={() => setClipboardConnectionInfo(null)}
-                  >
-                    {t('Ignore')}
-                  </Button>
-                </span>
-              </AlertDescription>
-            </Alert>
-          )}
 
           <Form {...form}>
             <form
               id={editorFormId}
               ref={channelFormRef}
               onSubmit={form.handleSubmit(onSubmit, onInvalid)}
-              className={sideDrawerFormClassName('gap-5')}
+              className={
+                isInline
+                  ? cn('flex flex-col gap-5 px-4 py-4 sm:px-6 sm:py-5')
+                  : sideDrawerFormClassName('gap-5')
+              }
             >
               {isChannelDetailLoading ? (
                 <ChannelEditorLoadingState />
               ) : (
-                <div className='grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start'>
+                <div className='grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start min-h-0'>
                   <ChannelEditorNav
                     providerLogo={
                       <ChannelTypeLogo type={currentType} size={18} />
@@ -1995,7 +1835,6 @@ export function ChannelMutateDrawer({
                     navigationLabel={t('Channels')}
                     items={editorNavItems}
                     activeItemId={activeEditorSectionId}
-                    expandedItemId={expandedEditorNavItemId}
                     onNavigate={handleEditorNavNavigate}
                   />
                   <div className='flex min-w-0 flex-col gap-5'>
@@ -3647,29 +3486,21 @@ export function ChannelMutateDrawer({
                       </ChannelModelsSection>
                     </div>
 
-                    <div
-                      id={CHANNEL_EDITOR_SECTION_IDS.advanced}
-                      className='scroll-mt-4'
-                    >
-                      <ChannelAdvancedSection
-                        open={advancedSettingsOpen}
-                        onOpenChange={handleAdvancedSettingsOpenChange}
-                        summary={advancedSummary}
-                      >
-                        {/* ── Routing & Overrides ── */}
-                        <div className={sideDrawerSectionClassName()}>
-                          <CardHeading
-                            title={t('Routing & Overrides')}
-                            icon={<Route className='h-4 w-4' />}
-                            iconTone='info'
-                          />
-                          <div
-                            id={ADVANCED_SETTINGS_SECTION_IDS.routingStrategy}
-                            className={configuredAdvancedSectionClassName(
-                              'flex scroll-mt-4 flex-col gap-4',
-                              routingStrategyConfigured
-                            )}
-                          >
+                    <div className='flex flex-col gap-5'>
+                      {/* ── Routing & Overrides ── */}
+                      <div className='flex flex-col gap-4 pb-6 last:pb-0'>
+                        <CardHeading
+                          title={t('Routing & Overrides')}
+                          icon={<Route className='h-4 w-4' />}
+                          iconTone='info'
+                        />
+                        <div
+                          id={ADVANCED_SETTINGS_SECTION_IDS.routingStrategy}
+                          className={configuredAdvancedSectionClassName(
+                            'flex scroll-mt-4 flex-col gap-4',
+                            routingStrategyConfigured
+                          )}
+                        >
                             <SubHeading
                               title={t('Routing Strategy')}
                               icon={<Route className='h-3.5 w-3.5' />}
@@ -4080,11 +3911,9 @@ export function ChannelMutateDrawer({
                         {/* ── Extra Settings ── */}
                         <div
                           id={ADVANCED_SETTINGS_SECTION_IDS.extraSettings}
-                          className={sideDrawerSectionClassName(
-                            configuredAdvancedSectionClassName(
-                              'scroll-mt-4',
-                              extraSettingsConfigured
-                            )
+                          className={configuredAdvancedSectionClassName(
+                            'scroll-mt-4 flex flex-col gap-4 pb-6 last:pb-0',
+                            extraSettingsConfigured
                           )}
                         >
                           <CardHeading
@@ -4436,11 +4265,9 @@ export function ChannelMutateDrawer({
                           currentType === 57) && (
                           <div
                             id={ADVANCED_SETTINGS_SECTION_IDS.fieldPassthrough}
-                            className={sideDrawerSectionClassName(
-                              configuredAdvancedSectionClassName(
-                                'scroll-mt-4',
-                                fieldPassthroughConfigured
-                              )
+                            className={configuredAdvancedSectionClassName(
+                              'scroll-mt-4 flex flex-col gap-4 pb-6 last:pb-0',
+                              fieldPassthroughConfigured
                             )}
                           >
                             <CardHeading
@@ -4680,11 +4507,9 @@ export function ChannelMutateDrawer({
                             id={
                               ADVANCED_SETTINGS_SECTION_IDS.upstreamModelDetection
                             }
-                            className={sideDrawerSectionClassName(
-                              configuredAdvancedSectionClassName(
-                                'scroll-mt-4',
-                                upstreamModelDetectionConfigured
-                              )
+                            className={configuredAdvancedSectionClassName(
+                              'scroll-mt-4 flex flex-col gap-4 pb-6 last:pb-0',
+                              upstreamModelDetectionConfigured
                             )}
                           >
                             <CardHeading
@@ -4819,7 +4644,6 @@ export function ChannelMutateDrawer({
                             </fieldset>
                           </div>
                         )}
-                      </ChannelAdvancedSection>
                     </div>
                   </div>
                 </div>
@@ -4827,32 +4651,27 @@ export function ChannelMutateDrawer({
             </form>
           </Form>
 
-          <SheetFooter className={sideDrawerFooterClassName()}>
-            {isInline ? (
-              <Button
-                type='button'
-                variant='outline'
-                disabled={isSubmitting}
-                onClick={() => handleOpenChange(false)}
-              >
-                {t('Cancel')}
-              </Button>
-            ) : (
+          {!isInline && (
+            <SheetFooter className={sideDrawerFooterClassName()}>
               <SheetClose
                 render={<Button variant='outline' disabled={isSubmitting} />}
               >
                 {t('Cancel')}
               </SheetClose>
-            )}
-            <Button form={editorFormId} type='submit' disabled={isSubmitting}>
-              {isSubmitting && (
-                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-              )}
-              {isEditing ? t('Update Channel') : t('Save changes')}
-            </Button>
-          </SheetFooter>
+              <Button form={editorFormId} type='submit' disabled={isSubmitting}>
+                {isSubmitting && (
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                )}
+                {isEditing ? t('Update Channel') : t('Save changes')}
+              </Button>
+            </SheetFooter>
+          )}
         </SheetContent>
       </Sheet>
+
+      {isInline && actionsContainer && editorActions
+        ? createPortal(editorActions, actionsContainer)
+        : null}
 
       {paramOverrideEditorOpen && !sensitiveLocked && (
         <ParamOverrideEditorDialog

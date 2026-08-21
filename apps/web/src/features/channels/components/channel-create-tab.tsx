@@ -19,15 +19,20 @@ For commercial licensing, please contact support@quantumnous.com
 import { ChannelMutateDrawer } from './drawers/channel-mutate-drawer'
 import { useChannels } from './channels-provider'
 
-export function ChannelCreateTab() {
+export function ChannelCreateTab(props: {
+  actionsContainer: HTMLElement | null
+  active: boolean
+}) {
   const { setPageTab } = useChannels()
 
   return (
-    <div className='flex h-full min-h-0 flex-1 flex-col overflow-hidden'>
+    <div className='flex min-h-full flex-col'>
       <ChannelMutateDrawer
+        open={props.active}
         presentation='inline'
         currentRow={null}
         formId='channel-create-form'
+        actionsContainer={props.actionsContainer}
         onOpenChange={(isOpen) => {
           if (!isOpen) setPageTab('channels')
         }}

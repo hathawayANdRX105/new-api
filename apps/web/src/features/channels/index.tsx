@@ -16,19 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Plus } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Main } from '@/components/layout'
 import { PageFooterProvider } from '@/components/layout/components/page-footer'
-import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import {
   hasPermission,
   ADMIN_PERMISSION_ACTIONS,
@@ -54,11 +47,19 @@ function ChannelsContent() {
   const [footerContainer, setFooterContainer] = useState<HTMLDivElement | null>(
     null
   )
+  const [createActionsContainer, setCreateActionsContainer] =
+    useState<HTMLDivElement | null>(null)
+  const createScrollContainerRef = useRef<HTMLDivElement | null>(null)
 
-  const switchToCreateTab = () => {
-    setCurrentRow(null)
-    setPageTab('create')
-  }
+  useEffect(() => {
+    if (pageTab !== 'create') return
+
+    const frameId = requestAnimationFrame(() => {
+      createScrollContainerRef.current?.focus({ preventScroll: true })
+    })
+
+    return () => cancelAnimationFrame(frameId)
+  }, [pageTab])
 
   return (
     <>
@@ -73,58 +74,53 @@ function ChannelsContent() {
             }}
             className='flex h-full min-h-0 flex-col'
           >
-            <div className='flex shrink-0 flex-col gap-2 px-3 pt-3 pb-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3 sm:gap-y-2 sm:px-4 sm:pt-5 sm:pb-3'>
-              <div className='flex items-center gap-2 sm:gap-3'>
-                <h2 className='truncate text-base font-bold tracking-tight sm:text-lg'>
-                  {t('Channels')}
-                </h2>
-                <Tooltip>
-                  <TooltipTrigger render={<span className='inline-flex' />}>
-                    <Button
-                      onClick={switchToCreateTab}
-                      size='sm'
-                      disabled={!canCreateChannel}
-                    >
-                      <Plus className='h-4 w-4' />
-                      <span className='max-sm:hidden'>
-                        {t('Create Channel')}
-                      </span>
-                      <span className='sm:hidden'>{t('Create')}</span>
-                    </Button>
-                  </TooltipTrigger>
-                  {!canCreateChannel && (
-                    <TooltipContent>
-                      {t('No permission to perform this action')}
-                    </TooltipContent>
-                  )}
-                </Tooltip>
+            <div className='shrink-0 px-3 pt-1 sm:px-4 sm:pt-5 sm:pb-3'>
+              <div className='flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-3 sm:gap-y-2'>
+                <TabsList className='grid w-full grid-cols-2 items-center bg-muted/60 p-1 sm:w-fit group-data-horizontal/tabs:h-auto'>
+                  <TabsTrigger
+                    value='create'
+                    disabled={!canCreateChannel}
+                    className='h-7 px-3 text-xs font-medium data-active:bg-background data-active:shadow-sm'
+                  >
+                    <span className='sm:hidden'>{t('Create')}</span>
+                    <span className='hidden sm:inline'>{t('Create Channel')}</span>
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value='channels'
+                    className='h-7 px-3 text-xs font-medium data-active:bg-background data-active:shadow-sm'
+                  >
+                    {t('Channels')}
+                  </TabsTrigger>
+                </TabsList>
+                <div
+                  ref={setCreateActionsContainer}
+                  className={
+                    pageTab === 'create'
+                      ? 'flex w-full flex-wrap items-center justify-center gap-2 sm:w-auto sm:justify-end'
+                      : 'hidden'
+                  }
+                />
               </div>
-              <TabsList className='grid w-full grid-cols-2 bg-muted/60 p-1 sm:w-fit'>
-                <TabsTrigger
-                  value='create'
-                  disabled={!canCreateChannel}
-                  onClick={() => setCurrentRow(null)}
-                  className='h-7 px-3 text-xs font-medium data-active:bg-background data-active:shadow-sm'
-                >
-                  <span className='sm:hidden'>{t('Create')}</span>
-                  <span className='hidden sm:inline'>{t('Create Channel')}</span>
-                </TabsTrigger>
-                <TabsTrigger
-                  value='channels'
-                  className='h-7 px-3 text-xs font-medium data-active:bg-background data-active:shadow-sm'
-                >
-                  {t('Channels')}
-                </TabsTrigger>
-              </TabsList>
             </div>
 
-            <div className='min-h-0 flex-1 overflow-hidden px-3 pt-1 pb-3 sm:px-4 sm:pt-1.5 sm:pb-4'>
+            <div
+              ref={createScrollContainerRef}
+              className={
+                pageTab === 'create'
+                  ? 'min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pt-1 pb-3 sm:px-4 sm:pt-1.5 sm:pb-4'
+                  : 'min-h-0 flex-1 overflow-hidden px-3 pt-1 pb-3 sm:px-4 sm:pt-1.5 sm:pb-4'
+              }
+              tabIndex={pageTab === 'create' ? -1 : undefined}
+            >
               <TabsContent
                 value='create'
                 keepMounted
-                className='m-0 flex h-full min-h-0 flex-col overflow-hidden data-hidden:hidden'
+                className='m-0 flex min-h-full flex-col data-hidden:hidden'
               >
-                <ChannelCreateTab />
+                <ChannelCreateTab
+                  actionsContainer={createActionsContainer}
+                  active={pageTab === 'create'}
+                />
               </TabsContent>
 
               <TabsContent

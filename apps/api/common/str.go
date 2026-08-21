@@ -1,7 +1,6 @@
 package common
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -53,20 +52,6 @@ func StrToMap(str string) (map[string]interface{}, error) {
 	return m, nil
 }
 
-func StrToJsonArray(str string) ([]interface{}, error) {
-	var js []interface{}
-	err := json.Unmarshal([]byte(str), &js)
-	if err != nil {
-		return nil, err
-	}
-	return js, nil
-}
-
-func IsJsonArray(str string) bool {
-	var js []interface{}
-	return json.Unmarshal([]byte(str), &js) == nil
-}
-
 func IsJsonObject(str string) bool {
 	var js map[string]interface{}
 	return json.Unmarshal([]byte(str), &js) == nil
@@ -94,10 +79,6 @@ func StringToByteSlice(s string) []byte {
 	tmp1 := (*[2]uintptr)(unsafe.Pointer(&s))
 	tmp2 := [3]uintptr{tmp1[0], tmp1[1], tmp1[1]}
 	return *(*[]byte)(unsafe.Pointer(&tmp2))
-}
-
-func EncodeBase64(str string) string {
-	return base64.StdEncoding.EncodeToString([]byte(str))
 }
 
 func GetJsonString(data any) string {

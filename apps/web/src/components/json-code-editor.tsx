@@ -187,7 +187,15 @@ export function JsonCodeEditor({
       return
     }
 
+    const selectionStart = editor.textarea.selectionStart
+    const selectionEnd = editor.textarea.selectionEnd
     editor.update({ value })
+    const selectionLimit = value.length
+    editor.textarea.setSelectionRange(
+      Math.min(selectionStart, selectionLimit),
+      Math.min(selectionEnd, selectionLimit)
+    )
+    setCursorLocation(getCursorLocation(editor.value, editor.textarea.selectionStart))
   }, [value])
 
   useEffect(() => {
@@ -244,24 +252,23 @@ export function JsonCodeEditor({
   ])
 
   const formatJson = () => {
-    const result = formatJsonDraft(value)
+    const result = formatJsonDraft(latestValueRef.current)
     if (result.didFormat) {
-      onChange(result.value)
+      latestOnChangeRef.current(result.value)
     }
   }
 
   const handleCopy = async () => {
-    const didCopy = await copyToClipboard(value)
-    if (didCopy) {
+    if (await copyToClipboard(value)) {
       toast.success(t('Copied to clipboard'))
-      return
+    } else {
+      toast.error(t('Failed to copy'))
     }
-
-    toast.error(t('Failed to copy'))
   }
 
   const statusMessage = t(jsonStatus.messageKey)
   const cursorText = `${cursorLocation.line}:${cursorLocation.column}`
+  const StatusIcon = jsonStatus.isValid ? CheckCircle2 : AlertCircle
 
   return (
     <div
@@ -272,28 +279,26 @@ export function JsonCodeEditor({
       data-form-root={dataFormRoot}
       {...rootProps}
     >
-      <div className='bg-muted/30 flex h-8 items-center justify-between border-b px-2'>
-        <div className='text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs font-medium'>
-          <Braces className='h-3.5 w-3.5' aria-hidden='true' />
-          <span>{t('JSON')}</span>
-          <span className='text-muted-foreground/70 font-mono'>
-            {cursorText}
-          </span>
-        </div>
-        <div className='flex items-center gap-2'>
+      <div className='bg-muted/30 flex min-h-8 items-center gap-2 border-b px-2'>
+        <div className='flex min-w-0 items-center gap-1.5 text-xs font-medium'>
+          <Braces
+            className='text-muted-foreground h-3.5 w-3.5 shrink-0'
+            aria-hidden='true'
+          />
           <span
             className={cn(
-              'flex items-center gap-1 text-xs',
+              'flex min-w-0 items-center gap-1',
               jsonStatus.isValid ? 'text-emerald-600' : 'text-destructive'
             )}
           >
-            {jsonStatus.isValid ? (
-              <CheckCircle2 className='h-3.5 w-3.5' aria-hidden='true' />
-            ) : (
-              <AlertCircle className='h-3.5 w-3.5' aria-hidden='true' />
-            )}
-            {statusMessage}
+            <StatusIcon className='h-3.5 w-3.5 shrink-0' aria-hidden='true' />
+            <span className='truncate'>{statusMessage}</span>
           </span>
+          <span className='text-muted-foreground/70 hidden font-mono sm:inline'>
+            {cursorText}
+          </span>
+        </div>
+        <div className='ml-auto flex shrink-0 items-center gap-1 sm:gap-2'>
           <Button
             type='button'
             variant='ghost'
