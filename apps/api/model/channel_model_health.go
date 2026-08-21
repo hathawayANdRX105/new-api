@@ -113,6 +113,7 @@ func InitChannelModelHealthCache() {
 	routeHealthLock.Lock()
 	routeHealthIDM = cache
 	routeHealthLock.Unlock()
+	common.SysLog("channel model health cache loaded from database")
 }
 
 func isolationDuration(level int, cfg *operation_setting.ChannelModelHealthSetting) (string, int64) {
