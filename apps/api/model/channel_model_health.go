@@ -169,10 +169,26 @@ func isolationDuration(level int, cfg *operation_setting.ChannelModelHealthSetti
 	}
 }
 
+// casMaxAttempts bounds the optimistic retry loop. A fixed small bound silently
+// drops failures once several requests race on the same route: with N writers a
+// loser can lose N-1 times in a row, so the ladder would under-count and the
+// route would stay selectable longer than configured. The bound is generous
+// because each lost attempt only costs one indexed read plus one failed update.
+const casMaxAttempts = 16
+
+// casBackoff spreads retries so contending writers do not re-collide in lockstep.
+func casBackoff(attempt int) {
+	if attempt <= 0 {
+		return
+	}
+	time.Sleep(time.Duration(attempt) * 200 * time.Microsecond)
+}
+
 // RecordRetryableFailure persists one retry-eligible failure using optimistic CAS.
 func RecordRetryableFailure(key RouteKey, errorCode string, now time.Time) error {
 	cfg := operation_setting.GetChannelModelHealthSetting()
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		casBackoff(attempt)
 		var row ChannelModelHealth
 		if err := DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error; err != nil {
 			if err != gorm.ErrRecordNotFound {
@@ -218,7 +234,8 @@ func DisableRoute(key RouteKey, now time.Time) error {
 	return updateRouteState(key, HealthDisabled, 0, nil, 0, now)
 }
 func updateRouteState(key RouteKey, state string, level int, until *int64, dormantCount int, now time.Time) error {
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		casBackoff(attempt)
 		var row ChannelModelHealth
 		if err := DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error; err != nil {
 			if err != gorm.ErrRecordNotFound {

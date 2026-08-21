@@ -508,3 +508,40 @@ func TestGetRouteIsolationReportsTransition(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 2, level, "the accessor must follow the ladder")
 }
+
+// TestConcurrentFailureNeverLosesUpdate pins the invariant behind #375's first
+// acceptance item: no retry-eligible failure may be silently dropped. A fixed
+// three-attempt CAS bound used to fail here, because with N writers a loser can
+// lose N-1 races in a row and return an error while its failure vanishes from
+// the ladder. The writer count exceeds the old bound on purpose.
+func TestConcurrentFailureNeverLosesUpdate(t *testing.T) {
+	withRouteHealthDB(t)
+	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+
+	now := time.Unix(1_700_000_000, 0)
+	key := RouteKey{ChannelId: 9901, Model: "no-lost-update-model"}
+	const writers = 25
+
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := RecordRetryableFailure(key, "bad_response", now); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		assert.NoError(t, err, "no writer may be rejected: a dropped failure under-counts the ladder")
+	}
+
+	var row ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
+	assert.Equal(t, writers, row.IsolationLevel, "every concurrent failure must escalate the ladder exactly once")
+	assert.Equal(t, writers+1, row.Version, "version must advance once per accepted write")
+}
