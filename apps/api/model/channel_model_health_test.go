@@ -2,6 +2,7 @@ package model
 
 import (
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -242,11 +243,232 @@ func TestRecordRetryableFailureVersionsMonotonically(t *testing.T) {
 	key := RouteKey{ChannelId: 9301, Model: "gpt-4o"}
 
 	seen := map[int]bool{}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(time.Duration(i)*time.Hour)))
 		var row ChannelModelHealth
 		require.NoError(t, DB.Where("channel_id = ?", key.ChannelId).First(&row).Error)
 		assert.False(t, seen[row.Version], "version %d reused", row.Version)
 		seen[row.Version] = true
 	}
+}
+
+// TestConcurrentRetryableFailureCASContention verifies that when multiple
+// goroutines concurrently call RecordRetryableFailure for the same RouteKey,
+// every accepted CAS write produces a unique version and no failure is
+// silently lost. At least N-1 calls must succeed in bumping the level; the
+// CAS retry loop absorbs the loser(s) without corrupting state.
+func TestConcurrentRetryableFailureCASContention(t *testing.T) {
+	withRouteHealthDB(t)
+	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+
+	now := time.Unix(1_700_000_000, 0)
+	key := RouteKey{ChannelId: 9401, Model: "concurrent-model"}
+
+	// Pre-create the row so all 10 goroutines compete on the CAS update path,
+	// not on INSERT. This mirrors the real multi-instance scenario where the
+	// row already exists and two processes race to bump the version.
+	require.NoError(t, DB.Create(&ChannelModelHealth{
+		ChannelId: key.ChannelId, Model: key.Model, State: HealthHealthy, Version: 1,
+	}).Error)
+	var wg sync.WaitGroup
+	errs := make(chan error, 10)
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := RecordRetryableFailure(key, "bad_response", now); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		assert.NoError(t, err, "CAS retry should absorb contention without error")
+	}
+
+	var row ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
+	assert.Equal(t, 10, row.IsolationLevel, "every concurrent failure must escalate exactly once")
+	assert.GreaterOrEqual(t, row.Version, 11, "version must be at least initial+10 after 10 accepted writes")
+	assert.NotEqual(t, HealthHealthy, row.State, "the route must be isolated after 10 failures")
+}
+
+// TestFullLadderEscalation drives the relay path from level 1 through level 10,
+// verifying the state transitions calm→calm→dormant and the corresponding
+// durations at each step match the configured ladder. This covers #375's
+// requirement for a complete level 4–10 simulation through RecordRetryableFailure.
+func TestFullLadderEscalation(t *testing.T) {
+	withRouteHealthDB(t)
+	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+
+	now := time.Unix(1_700_000_000, 0)
+	key := RouteKey{ChannelId: 9501, Model: "ladder-model"}
+
+	for level := 1; level <= 10; level++ {
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(time.Duration(level)*time.Hour)))
+
+		var row ChannelModelHealth
+		require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
+		assert.Equal(t, level, row.IsolationLevel, "level %d", level)
+
+		expectedState, expectedSeconds := isolationDuration(level, operation_setting.DefaultChannelModelHealthSetting())
+		assert.Equal(t, expectedState, row.State, "level %d state", level)
+		require.NotNil(t, row.Until, "level %d must have a deadline", level)
+		assert.Equal(t, now.Add(time.Duration(level)*time.Hour).Unix()+expectedSeconds, *row.Until, "level %d until", level)
+	}
+
+	// Level 10+ stays dormant with DormantMaxBase.
+	require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(11*time.Hour)))
+	var finalRow ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&finalRow).Error)
+	assert.Equal(t, 11, finalRow.IsolationLevel)
+	assert.Equal(t, HealthDormant, finalRow.State)
+	_, maxSeconds := isolationDuration(11, operation_setting.DefaultChannelModelHealthSetting())
+	require.NotNil(t, finalRow.Until)
+	assert.Equal(t, now.Add(11*time.Hour).Unix()+maxSeconds, *finalRow.Until)
+}
+
+// TestDormantMultiCycleThresholdAndSibling covers #375's requirement that a
+// positive threshold disables only after multiple dormant cycles, threshold 0
+// never disables, and a sibling model on the same channel remains unaffected
+// throughout. This is a superset of TestDormantExpiryDisableThreshold: it cycles
+// dormant→expiry→failure twice and checks the sibling at each step.
+func TestDormantMultiCycleThresholdAndSibling(t *testing.T) {
+	t.Run("threshold 3 disables on third dormant expiry", func(t *testing.T) {
+		withRouteHealthDB(t)
+		cfg := operation_setting.DefaultChannelModelHealthSetting()
+		cfg.DormantDisableThreshold = 3
+		withHealthSetting(t, cfg)
+
+		now := time.Unix(1_700_000_000, 0)
+		key := RouteKey{ChannelId: 9601, Model: "dormant-cycler"}
+		sibling := RouteKey{ChannelId: 9601, Model: "dormant-sibling"}
+
+		// Drive to level 9 (dormant) with an expired deadline.
+		driveToExpiredDormant := func(base time.Time) {
+			t.Helper()
+			// Levels 1–9: 9 consecutive failures at different times to avoid
+			// triggering the dormant-expiry counter mid-escalation.
+			for i := range 9 {
+				require.NoError(t, RecordRetryableFailure(key, "bad_response", base.Add(time.Duration(i)*time.Second)))
+			}
+			var row ChannelModelHealth
+			require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
+			assert.Equal(t, HealthDormant, row.State)
+			// Expire the dormant window.
+			require.NotNil(t, row.Until)
+			assert.True(t, *row.Until < base.Unix()+int64(cfg.DormantBase+8*cfg.DormantInterval)+1)
+		}
+
+		// Cycle 1: dormant expired, fail again → count=1, still dormant.
+		driveToExpiredDormant(now)
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(time.Hour)))
+		var row1 ChannelModelHealth
+		require.NoError(t, DB.Where("channel_id = ?", key.ChannelId).First(&row1).Error)
+		assert.Equal(t, 1, row1.DormantDisableCount, "first expired-dormant failure")
+		assert.NotEqual(t, HealthDisabled, row1.State, "threshold 3 not yet reached")
+
+		// Sibling must be healthy throughout.
+		assert.True(t, IsRouteHealthy(sibling, now), "sibling unaffected by dormant cycling")
+
+		// Cycle 2: expire and fail → count=2, still not disabled.
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(2*time.Hour)))
+		var row2 ChannelModelHealth
+		require.NoError(t, DB.Where("channel_id = ?", key.ChannelId).First(&row2).Error)
+		assert.Equal(t, 2, row2.DormantDisableCount)
+		assert.NotEqual(t, HealthDisabled, row2.State, "threshold 3 not yet reached")
+		assert.True(t, IsRouteHealthy(sibling, now), "sibling still healthy after cycle 2")
+
+		// Cycle 3: expire and fail → count=3, disabled.
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(3*time.Hour)))
+		var row3 ChannelModelHealth
+		require.NoError(t, DB.Where("channel_id = ?", key.ChannelId).First(&row3).Error)
+		assert.Equal(t, 3, row3.DormantDisableCount)
+		assert.Equal(t, HealthDisabled, row3.State, "threshold 3 reached → disabled")
+		assert.Nil(t, row3.Until, "disabled has no expiry")
+		assert.False(t, IsRouteHealthy(key, now.Add(365*24*time.Hour)), "disabled never self-heals")
+		assert.True(t, IsRouteHealthy(sibling, now), "sibling unaffected even after disable")
+	})
+
+	t.Run("threshold 0 cycles forever without disabling", func(t *testing.T) {
+		withRouteHealthDB(t)
+		cfg := operation_setting.DefaultChannelModelHealthSetting()
+		cfg.DormantDisableThreshold = 0
+		withHealthSetting(t, cfg)
+
+		now := time.Unix(1_700_000_000, 0)
+		key := RouteKey{ChannelId: 9602, Model: "cycler-zero"}
+		sibling := RouteKey{ChannelId: 9602, Model: "sibling-zero"}
+		prevCount := 0
+
+		for cycle := 0; cycle < 5; cycle++ {
+			// Each cycle uses a base time well past the previous cycle's dormant
+			// deadline so the expiry counter fires. The dormant window at level 9
+			// is DormantBase+8*DormantInterval = 120+640 = 760s with defaults, so
+			// advance by 10000s per cycle to guarantee expiry.
+			cycleBase := now.Add(time.Duration(cycle*10000) * time.Second)
+			// Drive to dormant (levels 1-9).
+			for i := range 9 {
+				require.NoError(t, RecordRetryableFailure(key, "bad_response", cycleBase.Add(time.Duration(i)*time.Second)))
+			}
+			// Fail after the dormant window has expired.
+			require.NoError(t, RecordRetryableFailure(key, "bad_response", cycleBase.Add(2000*time.Second)))
+		var row ChannelModelHealth
+		require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
+		assert.Greater(t, row.DormantDisableCount, prevCount, "cycle %d: counter must keep climbing", cycle)
+		prevCount = row.DormantDisableCount
+		assert.NotEqual(t, HealthDisabled, row.State, "threshold 0 never disables")
+		assert.True(t, IsRouteHealthy(sibling, now), "sibling healthy in cycle %d", cycle)
+		}
+	})
+}
+
+// TestCacheHydrationAndExpiryPersistence covers #375's requirement that a
+// restart rehydrates persisted isolation from DB, a selector expiry CAS writes
+// healthy back to DB, and a subsequent re-hydration sees the healthy state.
+func TestCacheHydrationAndExpiryPersistence(t *testing.T) {
+	withRouteHealthDB(t)
+	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+
+	now := time.Unix(1_700_000_000, 0)
+	key := RouteKey{ChannelId: 9701, Model: "hydration-model"}
+
+	// Persist a calm row with an already-expired deadline.
+	expiredUntil := now.Add(-time.Minute).Unix()
+	require.NoError(t, DB.Create(&ChannelModelHealth{
+		ChannelId:      key.ChannelId,
+		Model:          key.Model,
+		State:          HealthCalm,
+		IsolationLevel: 3,
+		Until:          &expiredUntil,
+		Version:        5,
+	}).Error)
+
+	// Simulate restart: clear cache and re-hydrate from DB.
+	ClearRouteHealthCache()
+	InitChannelModelHealthCache()
+
+	// Selector sees the route as healthy because the deadline has passed.
+	assert.True(t, IsRouteHealthy(key, now))
+
+	// The CAS must have persisted healthy to the DB.
+	var row ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
+	assert.Equal(t, HealthHealthy, row.State, "CAS must persist healthy after expiry")
+	assert.Nil(t, row.Until)
+	assert.Equal(t, 6, row.Version, "version must bump")
+	assert.Equal(t, 3, row.IsolationLevel, "expiry keeps the ladder")
+
+	// Simulate a second restart: re-hydrate and verify the healthy state survives.
+	ClearRouteHealthCache()
+	InitChannelModelHealthCache()
+
+	assert.True(t, IsRouteHealthy(key, now), "no spurious isolation after re-hydration")
+
+	var row2 ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row2).Error)
+	assert.Equal(t, HealthHealthy, row2.State, "DB must still be healthy after second hydration")
+	assert.Nil(t, row2.Until)
 }
