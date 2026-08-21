@@ -117,6 +117,32 @@ func TestRetryableFailureEscalatesAndExpires(t *testing.T) {
 	assert.Equal(t, now.Add(3*time.Second).Unix()+6, *row.Until, "level 2 lasts 6s")
 }
 
+// TestExpiredIsolationPersistsHealthy verifies that selector-side lazy recovery
+// uses the versioned DB update, rather than merely treating an expired cache
+// entry as healthy forever. A later process restart must not restore isolation.
+func TestExpiredIsolationPersistsHealthy(t *testing.T) {
+	withRouteHealthDB(t)
+	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+
+	now := time.Unix(1_700_000_000, 0)
+	until := now.Add(-time.Second).Unix()
+	key := RouteKey{ChannelId: 9051, Model: "expired-route"}
+	require.NoError(t, DB.Create(&ChannelModelHealth{
+		ChannelId: key.ChannelId, Model: key.Model, State: HealthCalm,
+		IsolationLevel: 2, Until: &until, Version: 4,
+	}).Error)
+	InitChannelModelHealthCache()
+
+	require.True(t, IsRouteHealthy(key, now))
+
+	var row ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
+	assert.Equal(t, HealthHealthy, row.State)
+	assert.Nil(t, row.Until)
+	assert.Equal(t, 5, row.Version)
+	assert.Equal(t, 2, row.IsolationLevel, "expiry keeps the escalation ladder")
+}
+
 // TestDormantExpiryDisableThreshold covers the auto-disable rule: failing again
 // after a dormant window has elapsed counts once, and the route is only disabled
 // when a positive threshold is reached. Threshold 0 must cycle forever instead.

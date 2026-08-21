@@ -59,7 +59,29 @@ func IsRouteHealthy(key RouteKey, now time.Time) bool {
 	if state.State == HealthDisabled {
 		return false
 	}
-	return state.Until == nil || *state.Until <= now.Unix()
+	if state.Until == nil || *state.Until > now.Unix() {
+		return false
+	}
+
+	result := DB.Model(&ChannelModelHealth{}).
+		Where("channel_id = ? AND model = ? AND version = ?", key.ChannelId, key.Model, state.Version).
+		Updates(map[string]interface{}{"state": HealthHealthy, "until": nil, "version": state.Version + 1, "updated_at": now.Unix()})
+	if result.Error != nil {
+		common.SysError("failed to expire channel model health: " + result.Error.Error())
+		return false
+	}
+	if result.RowsAffected != 0 {
+		cacheHealth(&ChannelModelHealth{ChannelId: key.ChannelId, Model: key.Model, State: HealthHealthy, IsolationLevel: state.IsolationLevel, Version: state.Version + 1, DormantDisableCount: state.DormantDisableCount})
+		return true
+	}
+
+	var row ChannelModelHealth
+	if err := DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error; err != nil {
+		common.SysError("failed to refresh channel model health after expiry CAS: " + err.Error())
+		return false
+	}
+	cacheHealth(&row)
+	return row.State == HealthHealthy || (row.State != HealthDisabled && (row.Until == nil || *row.Until <= now.Unix()))
 }
 func GetRouteHealth(key RouteKey) (string, bool) {
 	routeHealthLock.RLock()
