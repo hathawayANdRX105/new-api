@@ -1,0 +1,258 @@
+name: Stress & Chaos Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: '测试目标环境'
+        required: true
+        default: 'k8s_cluster'
+        type: choice
+        options:
+          - k8s_cluster
+          - local_runner
+      scenario:
+        description: '压测场景'
+        required: true
+        default: 'matrix'
+        type: choice
+        options:
+          - matrix
+          - short_non_stream
+          - long_stream
+          - mixed_stream_non_stream
+      concurrency:
+        description: '短/混合请求并发数'
+        required: true
+        default: '30'
+        type: string
+      stream_concurrency:
+        description: '长流式请求并发数'
+        required: true
+        default: '10'
+        type: string
+      duration:
+        description: '混合场景持续时间(秒)'
+        required: true
+        default: '60'
+        type: string
+      short_duration:
+        description: '短非流式场景持续时间(秒)'
+        required: true
+        default: '20'
+        type: string
+      long_duration:
+        description: '长流式场景持续时间(秒)'
+        required: true
+        default: '60'
+        type: string
+      model:
+        description: '测试模型'
+        required: true
+        default: 'kimi-k3'
+        type: string
+      target_url:
+        description: 'K8s 压测目标 URL，默认 NodePort 入口'
+        required: true
+        default: 'http://136.0.34.25:30080/v1'
+        type: string
+      host_header:
+        description: 'Ingress Host header，可为空'
+        required: false
+        default: 'api.example.com'
+        type: string
+      k8s_image_tag:
+        description: '测试镜像 tag；空值表示只测当前集群版本'
+        required: false
+        default: ''
+        type: string
+      rollback_after_test:
+        description: '测试结束后回滚到压测前 Deployment revision'
+        required: true
+        default: true
+        type: boolean
+      local_database:
+        description: 'local_runner 数据库'
+        required: true
+        default: 'sqlite'
+        type: choice
+        options:
+          - sqlite
+          - postgres
+
+jobs:
+  stress-test:
+    name: Stress ${{ inputs.target_env }} ${{ inputs.scenario }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: ${{ (inputs.local_database == 'postgres' && inputs.target_env == 'local_runner') && 'postgres:16-alpine' || '' }}
+        env:
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: rootpassword
+          POSTGRES_DB: newapi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python Dependencies
+        run: pip install --no-cache-dir aiohttp
+
+      - name: Setup kubectl
+        if: inputs.target_env == 'k8s_cluster'
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        if: inputs.target_env == 'k8s_cluster'
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_B64 }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Capture k8s baseline and optionally deploy test image
+        if: inputs.target_env == 'k8s_cluster'
+        run: |
+          set -euo pipefail
+          mkdir -p runtime/logs
+          MASTER_IMAGE=$(kubectl get deployment/new-api-master -o jsonpath='{.spec.template.spec.containers[?(@.name=="new-api")].image}')
+          WORKER_IMAGE=$(kubectl get deployment/new-api-worker -o jsonpath='{.spec.template.spec.containers[?(@.name=="new-api")].image}')
+          echo "$MASTER_IMAGE" > runtime/logs/master-image-before.txt
+          echo "$WORKER_IMAGE" > runtime/logs/worker-image-before.txt
+          kubectl rollout history deployment/new-api-master > runtime/logs/master-rollout-before.txt || true
+          kubectl rollout history deployment/new-api-worker > runtime/logs/worker-rollout-before.txt || true
+          kubectl get nodes -o wide > runtime/logs/nodes.txt
+          kubectl describe nodes > runtime/logs/nodes-describe.txt
+          kubectl top nodes > runtime/logs/nodes-top-before.txt || true
+          kubectl top pods -l app=new-api > runtime/logs/pods-top-before.txt || true
+          kubectl get pods -l app=new-api -o wide > runtime/logs/pods-before.txt
+          kubectl get deploy new-api-master new-api-worker -o yaml > runtime/logs/deploy-before.yaml
+          kubectl get ingress,svc -o wide > runtime/logs/network-before.txt
+          if [ -n "${{ inputs.k8s_image_tag }}" ]; then
+            IMAGE="ghcr.io/${{ github.repository }}:${{ inputs.k8s_image_tag }}"
+            kubectl set image deployment/new-api-master new-api="$IMAGE"
+            kubectl set image deployment/new-api-worker new-api="$IMAGE"
+            kubectl rollout status deployment/new-api-master --timeout=300s
+            kubectl rollout status deployment/new-api-worker --timeout=300s
+          fi
+
+      - name: Setup Go for local runner target
+        if: inputs.target_env == 'local_runner'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: Build and launch local new-api
+        if: inputs.target_env == 'local_runner'
+        run: |
+          set -euo pipefail
+          mkdir -p bin runtime/data runtime/logs
+          cd apps/api
+          go build -o ../../bin/new-api .
+          cd ../../runtime
+          if [ "${{ inputs.local_database }}" = "postgres" ]; then
+            export SQL_DSN="postgres://root:rootpassword@localhost:5432/newapi?sslmode=disable"
+          else
+            export SQL_DSN="local"
+            export SQLITE_PATH="$PWD/data/new-api.db"
+          fi
+          export PORT=3000 LOG_DIR="$PWD/logs" REDIS_CONN_STRING="redis://127.0.0.1:6379"
+          export SESSION_SECRET="ci-stress-test-secret" CRYPTO_SECRET="ci-stress-test-crypto-secret"
+          ../bin/new-api > logs/stdout.log 2>&1 &
+          for i in {1..30}; do curl -fsS http://127.0.0.1:3000/api/status && break || sleep 1; done
+
+      - name: Initialize local runner token
+        if: inputs.target_env == 'local_runner'
+        id: local_token
+        run: |
+          curl -s -X POST http://127.0.0.1:3000/api/setup -H 'Content-Type: application/json' -d '{"username":"root","password":"root123456","confirmPassword":"root123456"}' || true
+          TOKEN=$(curl -s -X POST http://127.0.0.1:3000/api/user/login -H 'Content-Type: application/json' -d '{"username":"root","password":"root123456"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["access_token"])')
+          curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' http://127.0.0.1:3000/api/option/ -d '{"key":"RetryTimes","value":"5"}'
+          curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' http://127.0.0.1:3000/api/token/ -d '{"name":"ci-stress-token","remain_quota":2147483647,"expired_time":-1,"unlimited_quota":true,"model_limits_enabled":false,"group":"default"}'
+          GW_KEY=$(python3 - <<'PY'
+          import sqlite3
+          print(sqlite3.connect('runtime/data/new-api.db').execute('select key from tokens order by id desc limit 1').fetchone()[0])
+          PY
+          )
+          echo "api_key=$GW_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Execute stress test
+        env:
+          K8S_API_KEY: ${{ secrets.K8S_STRESS_API_KEY }}
+          LOCAL_API_KEY: ${{ steps.local_token.outputs.api_key }}
+        run: |
+          set -euo pipefail
+          mkdir -p runtime/logs
+          if [ "${{ inputs.target_env }}" = "local_runner" ]; then
+            TARGET_URL="http://127.0.0.1:3000/v1"
+            API_KEY="$LOCAL_API_KEY"
+            HOST_HEADER=""
+          else
+            TARGET_URL="${{ inputs.target_url }}"
+            API_KEY="$K8S_API_KEY"
+            HOST_HEADER="${{ inputs.host_header }}"
+          fi
+          python3 scripts/stress_test.py \
+            --scenario "${{ inputs.scenario }}" \
+            --target-url "$TARGET_URL" \
+            --host-header "$HOST_HEADER" \
+            --api-key "$API_KEY" \
+            --model "${{ inputs.model }}" \
+            --concurrency "${{ inputs.concurrency }}" \
+            --stream-concurrency "${{ inputs.stream_concurrency }}" \
+            --duration "${{ inputs.duration }}" \
+            --short-duration "${{ inputs.short_duration }}" \
+            --long-duration "${{ inputs.long_duration }}" \
+            --report-file runtime/logs/report.md \
+            --json-file runtime/logs/metrics.json
+
+      - name: Capture k8s after metrics
+        if: always() && inputs.target_env == 'k8s_cluster'
+        run: |
+          kubectl top nodes > runtime/logs/nodes-top-after.txt || true
+          kubectl top pods -l app=new-api > runtime/logs/pods-top-after.txt || true
+          kubectl get pods -l app=new-api -o wide > runtime/logs/pods-after.txt || true
+          kubectl logs deployment/new-api-worker --tail=300 > runtime/logs/worker-tail.log || true
+          kubectl logs deployment/new-api-master --tail=300 > runtime/logs/master-tail.log || true
+
+      - name: Restore pre-test k8s images
+        if: always() && inputs.target_env == 'k8s_cluster' && inputs.rollback_after_test == true && inputs.k8s_image_tag != ''
+        run: |
+          MASTER_IMAGE=$(cat runtime/logs/master-image-before.txt 2>/dev/null || true)
+          WORKER_IMAGE=$(cat runtime/logs/worker-image-before.txt 2>/dev/null || true)
+          [ -n "$MASTER_IMAGE" ] && kubectl set image deployment/new-api-master new-api="$MASTER_IMAGE" || true
+          [ -n "$WORKER_IMAGE" ] && kubectl set image deployment/new-api-worker new-api="$WORKER_IMAGE" || true
+          kubectl rollout status deployment/new-api-master --timeout=300s || true
+          kubectl rollout status deployment/new-api-worker --timeout=300s || true
+          kubectl get deploy new-api-master new-api-worker -o wide > runtime/logs/deploy-after-rollback.txt || true
+
+      - name: Append report to job summary
+        if: always()
+        run: |
+          [ -f runtime/logs/report.md ] && cat runtime/logs/report.md >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo '## Server / K8s Evidence' >> "$GITHUB_STEP_SUMMARY"
+          for f in runtime/logs/nodes.txt runtime/logs/nodes-top-before.txt runtime/logs/nodes-top-after.txt runtime/logs/pods-before.txt runtime/logs/pods-after.txt; do
+            [ -f "$f" ] && { echo "### $f" >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"; cat "$f" >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-test-artifacts-${{ inputs.target_env }}-${{ inputs.scenario }}
+          path: runtime/logs/
