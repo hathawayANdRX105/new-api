@@ -322,7 +322,18 @@ export function ProxyNodeView() {
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent
+              side="bottom"
+              sideOffset={8}
+              align="end"
+              alignItemWithTrigger={false}
+              collisionPadding={0}
+              collisionAvoidance={{
+                side: "shift",
+                align: "shift",
+                fallbackAxisSide: "none",
+              }}
+            >
               <SelectGroup>
                 <SelectItem value="name">{t("Sort by Name")}</SelectItem>
                 <SelectItem value="health">{t("Sort by Health")}</SelectItem>

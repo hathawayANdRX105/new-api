@@ -2,7 +2,10 @@ package operation_setting
 
 import "strings"
 
+// DemoSiteEnabled is a flag to enable/disable the demo site mode.
 var DemoSiteEnabled = false
+
+// SelfUseModeEnabled is a flag to enable/disable self-use mode.
 var SelfUseModeEnabled = false
 
 var AutomaticDisableKeywords = []string{
@@ -15,10 +18,12 @@ var AutomaticDisableKeywords = []string{
 	"Your account is not authorized",
 }
 
+// AutomaticDisableKeywordsToString converts the automatic disable keywords to a string.
 func AutomaticDisableKeywordsToString() string {
 	return strings.Join(AutomaticDisableKeywords, "\n")
 }
 
+// AutomaticDisableKeywordsFromString parses automatic disable keywords from a string.
 func AutomaticDisableKeywordsFromString(s string) {
 	AutomaticDisableKeywords = []string{}
 	ak := strings.Split(s, "\n")

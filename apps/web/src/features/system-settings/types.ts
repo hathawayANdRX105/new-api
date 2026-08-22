@@ -236,6 +236,15 @@ export type ModelSettings = {
   DormantInterval: number
   DormantMaxBase: number
   DormantDisableThreshold: number
+  LocalFailureThreshold: number
+  UpstreamFailureThreshold: number
+  CalmWeightScale: number
+  DormantWeightScale: number
+  EmergencyThreshold: number
+  WarningThreshold: number
+  AcceleratedDecayStep: number
+  NormalDecayStep: number
+  KeyProbeEnabled: boolean
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
   AutomaticDisableKeywords: string

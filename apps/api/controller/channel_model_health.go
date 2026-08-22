@@ -16,6 +16,7 @@ import (
 // render a countdown without trusting the browser clock to match the server.
 type channelModelHealthRow struct {
 	ChannelId           int    `json:"channel_id"`
+	KeyIndex            int    `json:"key_index"`
 	Model               string `json:"model"`
 	State               string `json:"state"`
 	IsolationLevel      int    `json:"isolation_level"`
@@ -61,6 +62,7 @@ func GetChannelModelHealth(c *gin.Context) {
 		}
 		payload = append(payload, channelModelHealthRow{
 			ChannelId:           row.ChannelId,
+			KeyIndex:            row.KeyIndex,
 			Model:               row.Model,
 			State:               state,
 			IsolationLevel:      row.IsolationLevel,
@@ -81,6 +83,7 @@ func GetChannelModelHealth(c *gin.Context) {
 
 type channelModelHealthActionRequest struct {
 	ChannelId int    `json:"channel_id"`
+	KeyIndex  int    `json:"key_index"`
 	Model     string `json:"model"`
 }
 
@@ -95,7 +98,7 @@ func UpdateChannelModelHealth(c *gin.Context) {
 	}
 
 	action := c.Param("action")
-	key := model.RouteKey{ChannelId: req.ChannelId, Model: req.Model}
+	key := model.RouteKey{ChannelId: req.ChannelId, KeyIndex: req.KeyIndex, Model: req.Model}
 	now := time.Now()
 
 	var err error

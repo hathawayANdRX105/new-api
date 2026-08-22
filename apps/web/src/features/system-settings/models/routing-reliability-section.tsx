@@ -76,6 +76,28 @@ const createRoutingReliabilitySchema = (t: (key: string) => string) => {
     .int()
     .min(0, t('Isolation durations must be non-negative'))
 
+  const failureThreshold = z.coerce
+    .number()
+    .int()
+    .min(1, t('Failure threshold must be at least 1'))
+
+  const weightScale = z.coerce
+    .number()
+    .int()
+    .min(0, t('Weight scale must be between 0 and 100'))
+    .max(100, t('Weight scale must be between 0 and 100'))
+
+  const availabilityThreshold = z.coerce
+    .number()
+    .int()
+    .min(0, t('Availability threshold must be between 0 and 100'))
+    .max(100, t('Availability threshold must be between 0 and 100'))
+
+  const decayStep = z.coerce
+    .number()
+    .int()
+    .min(1, t('Decay step must be at least 1'))
+
   return z
     .object({
       RetryTimes: z.coerce.number().min(0).max(10),
@@ -90,6 +112,15 @@ const createRoutingReliabilitySchema = (t: (key: string) => string) => {
         .number()
         .int()
         .min(0, t('Auto-disable threshold must be non-negative')),
+      LocalFailureThreshold: failureThreshold,
+      UpstreamFailureThreshold: failureThreshold,
+      CalmWeightScale: weightScale,
+      DormantWeightScale: weightScale,
+      EmergencyThreshold: availabilityThreshold,
+      WarningThreshold: availabilityThreshold,
+      AcceleratedDecayStep: decayStep,
+      NormalDecayStep: decayStep,
+      KeyProbeEnabled: z.boolean(),
       ChannelDisableThreshold: numericString,
       AutomaticDisableChannelEnabled: z.boolean(),
       AutomaticEnableChannelEnabled: z.boolean(),
@@ -134,8 +165,9 @@ const createRoutingReliabilitySchema = (t: (key: string) => string) => {
     })
 }
 
-// The eight isolation keys share one shape across the form input, the parsed
-// values, and the diffed payload, so they are declared once here.
+// The isolation and adaptive-scheduling keys share one numeric shape across the
+// form input, the parsed values, and the diffed payload, so they are declared
+// once here. KeyProbeEnabled is boolean and lives outside this group.
 type RouteIsolationValues = {
   CalmFastBase: number
   CalmFastInterval: number
@@ -145,6 +177,12 @@ type RouteIsolationValues = {
   DormantInterval: number
   DormantMaxBase: number
   DormantDisableThreshold: number
+  CalmWeightScale: number
+  DormantWeightScale: number
+  EmergencyThreshold: number
+  WarningThreshold: number
+  AcceleratedDecayStep: number
+  NormalDecayStep: number
 }
 
 const ROUTE_ISOLATION_KEYS = [
@@ -156,6 +194,12 @@ const ROUTE_ISOLATION_KEYS = [
   'DormantInterval',
   'DormantMaxBase',
   'DormantDisableThreshold',
+  'CalmWeightScale',
+  'DormantWeightScale',
+  'EmergencyThreshold',
+  'WarningThreshold',
+  'AcceleratedDecayStep',
+  'NormalDecayStep',
 ] as const satisfies ReadonlyArray<keyof RouteIsolationValues>
 
 // Mirrors the backend DefaultChannelModelHealthSetting, so a form rendered before
@@ -168,11 +212,20 @@ const ROUTE_ISOLATION_DEFAULTS: RouteIsolationValues = {
   DormantBase: 120,
   DormantInterval: 120,
   DormantMaxBase: 360,
-  DormantDisableThreshold: 0,
+  DormantDisableThreshold: 3,
+  CalmWeightScale: 50,
+  DormantWeightScale: 10,
+  EmergencyThreshold: 20,
+  WarningThreshold: 50,
+  AcceleratedDecayStep: 2,
+  NormalDecayStep: 1,
 }
 
 type RoutingReliabilityFormValues = RouteIsolationValues & {
   RetryTimes: number
+  LocalFailureThreshold: number
+  UpstreamFailureThreshold: number
+  KeyProbeEnabled: boolean
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
@@ -191,6 +244,9 @@ type RoutingReliabilityFormInput = Record<
   unknown
 > & {
   RetryTimes: unknown
+  LocalFailureThreshold: unknown
+  UpstreamFailureThreshold: unknown
+  KeyProbeEnabled: boolean
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
@@ -207,6 +263,9 @@ type RoutingReliabilityFormInput = Record<
 type RoutingReliabilitySectionProps = {
   defaultValues: Partial<RouteIsolationValues> & {
     RetryTimes: number
+    LocalFailureThreshold: number
+    UpstreamFailureThreshold: number
+    KeyProbeEnabled: boolean
     ChannelDisableThreshold: string
     AutomaticDisableChannelEnabled: boolean
     AutomaticEnableChannelEnabled: boolean
@@ -225,6 +284,9 @@ function normalizeLineEndings(value: string) {
 
 type NormalizedRoutingReliabilityValues = RouteIsolationValues & {
   RetryTimes: number
+  LocalFailureThreshold: number
+  UpstreamFailureThreshold: number
+  KeyProbeEnabled: boolean
   ChannelDisableThreshold: string
   AutomaticDisableChannelEnabled: boolean
   AutomaticEnableChannelEnabled: boolean
@@ -261,6 +323,9 @@ const buildFormDefaults = (
 ): RoutingReliabilityFormInput => ({
   ...resolveIsolationValues(defaults),
   RetryTimes: defaults.RetryTimes ?? 0,
+  LocalFailureThreshold: defaults.LocalFailureThreshold ?? 1,
+  UpstreamFailureThreshold: defaults.UpstreamFailureThreshold ?? 1,
+  KeyProbeEnabled: defaults.KeyProbeEnabled ?? true,
   ChannelDisableThreshold: defaults.ChannelDisableThreshold ?? '',
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
@@ -285,6 +350,9 @@ const normalizeDefaults = (
 ): NormalizedRoutingReliabilityValues => ({
   ...resolveIsolationValues(defaults),
   RetryTimes: defaults.RetryTimes ?? 0,
+  LocalFailureThreshold: defaults.LocalFailureThreshold ?? 1,
+  UpstreamFailureThreshold: defaults.UpstreamFailureThreshold ?? 1,
+  KeyProbeEnabled: defaults.KeyProbeEnabled ?? true,
   ChannelDisableThreshold: (defaults.ChannelDisableThreshold ?? '').trim(),
   AutomaticDisableChannelEnabled: defaults.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: defaults.AutomaticEnableChannelEnabled,
@@ -317,7 +385,16 @@ const normalizeFormValues = (
   DormantInterval: values.DormantInterval,
   DormantMaxBase: values.DormantMaxBase,
   DormantDisableThreshold: values.DormantDisableThreshold,
+  CalmWeightScale: values.CalmWeightScale,
+  DormantWeightScale: values.DormantWeightScale,
+  EmergencyThreshold: values.EmergencyThreshold,
+  WarningThreshold: values.WarningThreshold,
+  AcceleratedDecayStep: values.AcceleratedDecayStep,
+  NormalDecayStep: values.NormalDecayStep,
+  KeyProbeEnabled: values.KeyProbeEnabled,
   RetryTimes: values.RetryTimes,
+  LocalFailureThreshold: values.LocalFailureThreshold,
+  UpstreamFailureThreshold: values.UpstreamFailureThreshold,
   ChannelDisableThreshold: values.ChannelDisableThreshold.trim(),
   AutomaticDisableChannelEnabled: values.AutomaticDisableChannelEnabled,
   AutomaticEnableChannelEnabled: values.AutomaticEnableChannelEnabled,
@@ -681,6 +758,240 @@ export function RoutingReliabilitySection({
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='LocalFailureThreshold'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Local failure threshold')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='1'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Number of local failures (no available channel, parse error, quota rejection) before a route is isolated. Local failures are tracked separately from upstream errors.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='UpstreamFailureThreshold'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Upstream failure threshold')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='1'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Number of upstream provider errors before a route is isolated. Upstream failures reflect channel health and may need a lower threshold than local failures.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className='flex min-w-0 flex-col gap-4'>
+            <div className='flex flex-col gap-1'>
+              <h4 className='text-sm font-medium'>
+                {t('Adaptive scheduling')}
+              </h4>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'An isolated route keeps a reduced share of traffic instead of leaving the pool, and pool availability decides how aggressively isolation applies.'
+                )}
+              </p>
+            </div>
+            <div className='grid min-w-0 gap-6 lg:grid-cols-2'>
+              <FormField
+                control={form.control}
+                name='CalmWeightScale'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Calm weight scale (%)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        max='100'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Share of its normal traffic a calm route keeps. It stays selectable, so the next pick is a live probe.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='DormantWeightScale'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Dormant weight scale (%)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        max='100'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Share of its normal traffic a dormant route keeps. Lower than the calm scale, but never zero.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='EmergencyThreshold'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Emergency availability (%)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        max='100'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Below this share of healthy units for a model, isolation is ignored entirely and the least-damaged routes are pulled back.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='WarningThreshold'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Warning availability (%)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='0'
+                        max='100'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Below this share of healthy units, no new isolation is recorded and recovery speeds up. Also the target the emergency pull-back aims for.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='NormalDecayStep'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Normal decay step')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='1'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Isolation stages a successful request or an elapsed window removes at normal availability.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='AcceleratedDecayStep'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Accelerated decay step')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min='1'
+                        step='1'
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Isolation stages removed per recovery while availability is in the warning band.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='KeyProbeEnabled'
+                render={({ field }) => (
+                  <SettingsSwitchItem>
+                    <SettingsSwitchContent>
+                      <FormLabel>{t('Verify key on auto-disable')}</FormLabel>
+                      <FormDescription>
+                        {t(
+                          'When a route is auto-disabled, check the key with a model-list request, which spends no tokens. A 401 or 403 disables every model behind that key.'
+                        )}
+                      </FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </SettingsSwitchItem>
                 )}
               />
             </div>

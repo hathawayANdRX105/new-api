@@ -192,17 +192,32 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
+	// Record exactly one retry-eligible failure after the loop terminates. Only
+	// the last retry-eligible route is persisted, so a multi-retry request that
+	// exhausts every channel isolates the final failing route, not each
+	// intermediate one. Success returns early before reaching this point;
+	// getChannel failure breaks before any route is set.
+	var lastRetryRoute *model.RouteKey
+	var lastRetryErr *types.NewAPIError
+
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
 			newAPIError = channelErr
+			// Terminal local error: a prior retry attempt may have left an
+			// upstream candidate; drop it so the post-loop call records nothing.
+			lastRetryRoute = nil
+			lastRetryErr = nil
 			break
 		}
 		addUsedChannel(c, channel.Id)
 		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
 			newAPIError = billingErr
+			// Terminal local error: drop any prior upstream candidate.
+			lastRetryRoute = nil
+			lastRetryErr = nil
 			break
 		}
 
@@ -214,6 +229,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			} else {
 				newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
+			// Terminal local error: drop any prior upstream candidate.
+			lastRetryRoute = nil
+			lastRetryErr = nil
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
@@ -230,6 +248,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		if newAPIError == nil {
+			if healthErr := model.RecordSuccess(model.RouteKey{
+				ChannelId: channel.Id,
+				KeyIndex:  common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex),
+				Model:     relayInfo.OriginModelName,
+			}, time.Now()); healthErr != nil {
+				logger.LogError(c, fmt.Sprintf("record route success failed: %s", healthErr.Error()))
+			}
 			relayInfo.LastError = nil
 			return
 		}
@@ -237,18 +262,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		// The state machine consumes the retry loop's own verdict: only a failure
-		// this request would actually retry against another channel isolates the
-		// (channel, model) route. Request-level exclusion stays in place so the
-		// immediate next attempt cannot land on the same channel.
+		// retryEligible drives the request-level ExcludeSet and the break: it
+		// uses the real remaining budget. The state-machine candidate is
+		// independent of the budget — it asks "would this error retry if one
+		// retry were available?" via shouldRetry(c, err, 1). A 500->500 chain
+		// whose terminal attempt has budget 0 still records the terminal 500;
+		// a 500->400 chain clears the intermediate 500 because the terminal
+		// 400 is not an isolation candidate.
 		retryEligible := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
-		if retryEligible {
-			routeKey := model.RouteKey{ChannelId: channel.Id, Model: relayInfo.OriginModelName}
-			recordRouteIsolation(c, routeKey, newAPIError)
-			if retryParam.ExcludeSet != nil {
-				retryParam.ExcludeSet[channel.Id] = true
-			}
+		if retryEligible && retryParam.ExcludeSet != nil {
+			retryParam.ExcludeSet[channel.Id] = true
 		}
+		lastRetryRoute, lastRetryErr = terminalIsolationCandidate(
+			common.RetryTimes > 0 && wouldRetryWithOneBudget(c, newAPIError),
+			model.RouteKey{ChannelId: channel.Id, KeyIndex: common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex), Model: relayInfo.OriginModelName},
+			newAPIError,
+		)
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
 		if !retryEligible {
@@ -266,6 +295,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
 	}
+	// Persist exactly one retry-eligible failure — only the last one — after
+	// the loop ends with a terminal request failure and a route was selected.
+	if newAPIError != nil && lastRetryRoute != nil && lastRetryErr != nil {
+		recordRouteIsolation(c, *lastRetryRoute, lastRetryErr, classifyChatFailureSource(lastRetryErr))
+	}
+
 }
 
 var upgrader = websocket.Upgrader{
@@ -346,9 +381,9 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 // operator can tell a RouteKey transition apart from a plain upstream failure
 // (logged by processChannelError) and from a system performance rejection
 // (logged by the SystemPerformanceCheck middleware).
-func recordRouteIsolation(c *gin.Context, routeKey model.RouteKey, apiErr *types.NewAPIError) {
+func recordRouteIsolation(c *gin.Context, routeKey model.RouteKey, apiErr *types.NewAPIError, source model.FailureSource) {
 	now := time.Now()
-	if healthErr := model.RecordRetryableFailure(routeKey, string(apiErr.GetErrorCode()), now); healthErr != nil {
+	if healthErr := model.RecordRetryableFailure(routeKey, string(apiErr.GetErrorCode()), source, now); healthErr != nil {
 		logger.LogError(c, healthErr.Error())
 		return
 	}
@@ -366,6 +401,42 @@ func recordRouteIsolation(c *gin.Context, routeKey model.RouteKey, apiErr *types
 		routeKey.ChannelId, routeKey.Model, state, level, remaining, apiErr.GetErrorCode()))
 }
 
+// terminalIsolationCandidate keeps only the terminal retry-eligible route. A
+// non-candidate terminal error deliberately clears a prior retry attempt, so a
+// later no-channel or request-local error cannot isolate an earlier provider
+// failure.
+func terminalIsolationCandidate(candidate bool, route model.RouteKey, err *types.NewAPIError) (*model.RouteKey, *types.NewAPIError) {
+	if !candidate {
+		return nil, nil
+	}
+	return &route, err
+}
+
+// wouldRetryWithOneBudget reports whether a chat relay error would retry if a
+// single retry were available, independent of the remaining budget. It reuses
+// shouldRetry with retryTimes=1 so the skip/channel/specific-channel/status-code
+// rules live in exactly one place. The RetryTimes>0 gate is applied at the call
+// site to preserve #376 acceptance: RetryTimes=0 writes no state.
+func wouldRetryWithOneBudget(c *gin.Context, err *types.NewAPIError) bool {
+	return shouldRetry(c, err, 1)
+}
+
+// classifyChatFailureSource maps a chat relay error to its failure source.
+// ErrorCodeDoRequestFailed is a local transport failure (DNS, connection
+// refused, TLS handshake) — our infrastructure could not reach the provider,
+// not a provider response. Provider/status transaction failures
+// (bad_response_status_code, bad_response, bad_response_body, empty_response)
+// are upstream: the provider answered with an error.
+func classifyChatFailureSource(err *types.NewAPIError) model.FailureSource {
+	if err == nil {
+		return model.FailureSourceUpstream
+	}
+	if err.GetErrorCode() == types.ErrorCodeDoRequestFailed {
+		return model.FailureSourceLocal
+	}
+	return model.FailureSourceUpstream
+}
+
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
 	if openaiErr == nil {
 		return false
@@ -373,14 +444,14 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
-	if types.IsChannelError(openaiErr) {
-		return true
-	}
 	if types.IsSkipRetryError(openaiErr) {
 		return false
 	}
 	if retryTimes <= 0 {
 		return false
+	}
+	if types.IsChannelError(openaiErr) {
+		return true
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
@@ -560,6 +631,13 @@ func RelayTask(c *gin.Context) {
 		ExcludeSet:  make(map[int]bool),
 	}
 
+	// Record exactly one retry-eligible failure after the loop terminates. Only
+	// upstream (non-local) errors are recorded; local task errors are our own
+	// infrastructure and do not reflect channel health. Success breaks with
+	// taskErr == nil; getChannel failure breaks before any route is set.
+	var lastRetryRoute *model.RouteKey
+	var lastRetryErr *types.NewAPIError
+
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		var channel *model.Channel
 
@@ -568,6 +646,9 @@ func RelayTask(c *gin.Context) {
 			if retryParam.GetRetry() > 0 {
 				if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
 					taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
+					// Terminal local error: drop any prior upstream candidate.
+					lastRetryRoute = nil
+					lastRetryErr = nil
 					break
 				}
 			}
@@ -577,6 +658,9 @@ func RelayTask(c *gin.Context) {
 			if channelErr != nil {
 				logger.LogError(c, channelErr.Error())
 				taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", http.StatusInternalServerError)
+				// Terminal local error: drop any prior upstream candidate.
+				lastRetryRoute = nil
+				lastRetryErr = nil
 				break
 			}
 		}
@@ -589,6 +673,9 @@ func RelayTask(c *gin.Context) {
 			} else {
 				taskErr = service.TaskErrorWrapperLocal(bodyErr, "read_request_body_failed", http.StatusBadRequest)
 			}
+			// Terminal local error: drop any prior upstream candidate.
+			lastRetryRoute = nil
+			lastRetryErr = nil
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
@@ -599,19 +686,29 @@ func RelayTask(c *gin.Context) {
 		}
 
 		retryEligible := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
+		// Isolation candidate is independent of the remaining budget: it asks
+		// "would this task error retry if one retry were available?" via
+		// shouldRetryTaskRelay(c, ..., 1). Only upstream (non-local) errors
+		// reflect channel health; a local terminal error clears any prior
+		// candidate.
+		isolationCandidate := !taskErr.LocalError && common.RetryTimes > 0 && shouldRetryTaskRelay(c, channel.Id, taskErr, 1)
 		if !taskErr.LocalError {
 			taskAPIError := types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode)
-			if retryEligible {
-				routeKey := model.RouteKey{ChannelId: channel.Id, Model: relayInfo.OriginModelName}
-				recordRouteIsolation(c, routeKey, taskAPIError)
-				if retryParam.ExcludeSet != nil {
-					retryParam.ExcludeSet[channel.Id] = true
-				}
+			if retryEligible && retryParam.ExcludeSet != nil {
+				retryParam.ExcludeSet[channel.Id] = true
 			}
+			lastRetryRoute, lastRetryErr = terminalIsolationCandidate(
+				isolationCandidate,
+				model.RouteKey{ChannelId: channel.Id, KeyIndex: common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex), Model: relayInfo.OriginModelName},
+				taskAPIError,
+			)
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				taskAPIError)
+		} else {
+			lastRetryRoute = nil
+			lastRetryErr = nil
 		}
 
 		if !retryEligible {
@@ -623,6 +720,12 @@ func RelayTask(c *gin.Context) {
 	if len(useChannel) > 1 {
 		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
+	}
+
+	// Persist exactly one retry-eligible upstream failure — only the last one —
+	// after the loop ends with a terminal task failure and a route was selected.
+	if taskErr != nil && lastRetryRoute != nil && lastRetryErr != nil {
+		recordRouteIsolation(c, *lastRetryRoute, lastRetryErr, model.FailureSourceUpstream)
 	}
 
 	// ── 成功：结算 + 日志 + 插入任务 ──

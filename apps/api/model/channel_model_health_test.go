@@ -36,17 +36,26 @@ func withHealthSetting(t *testing.T, cfg *operation_setting.ChannelModelHealthSe
 	previous := operation_setting.GetChannelModelHealthSetting()
 	apply := func(c *operation_setting.ChannelModelHealthSetting) {
 		for key, value := range map[string]int{
-			"CalmFastBase":            c.CalmFastBase,
-			"CalmFastInterval":        c.CalmFastInterval,
-			"CalmSlowBase":            c.CalmSlowBase,
-			"CalmSlowInterval":        c.CalmSlowInterval,
-			"DormantBase":             c.DormantBase,
-			"DormantInterval":         c.DormantInterval,
-			"DormantMaxBase":          c.DormantMaxBase,
-			"DormantDisableThreshold": c.DormantDisableThreshold,
+			"CalmFastBase":             c.CalmFastBase,
+			"CalmFastInterval":         c.CalmFastInterval,
+			"CalmSlowBase":             c.CalmSlowBase,
+			"CalmSlowInterval":         c.CalmSlowInterval,
+			"DormantBase":              c.DormantBase,
+			"DormantInterval":          c.DormantInterval,
+			"DormantMaxBase":           c.DormantMaxBase,
+			"DormantDisableThreshold":  c.DormantDisableThreshold,
+			"LocalFailureThreshold":    c.LocalFailureThreshold,
+			"UpstreamFailureThreshold": c.UpstreamFailureThreshold,
+			"CalmWeightScale":          c.CalmWeightScale,
+			"DormantWeightScale":       c.DormantWeightScale,
+			"EmergencyThreshold":       c.EmergencyThreshold,
+			"WarningThreshold":         c.WarningThreshold,
+			"AcceleratedDecayStep":     c.AcceleratedDecayStep,
+			"NormalDecayStep":          c.NormalDecayStep,
 		} {
 			require.NoError(t, operation_setting.UpdateChannelModelHealthSettingValue(key, strconv.Itoa(value)))
 		}
+		require.NoError(t, operation_setting.UpdateChannelModelHealthSettingValue("KeyProbeEnabled", strconv.FormatBool(c.KeyProbeEnabled)))
 	}
 	apply(cfg)
 	t.Cleanup(func() { apply(previous) })
@@ -98,7 +107,7 @@ func TestRetryableFailureEscalatesAndExpires(t *testing.T) {
 
 	require.True(t, IsRouteHealthy(key, now), "an unseen route is healthy without a DB read")
 
-	require.NoError(t, RecordRetryableFailure(key, "bad_response_status_code", now))
+	require.NoError(t, RecordRetryableFailure(key, "bad_response_status_code", FailureSourceUpstream, now))
 	assert.False(t, IsRouteHealthy(key, now), "the failed route is isolated")
 	assert.True(t, IsRouteHealthy(sibling, now), "isolation must not spill onto another model of the same channel")
 
@@ -107,21 +116,26 @@ func TestRetryableFailureEscalatesAndExpires(t *testing.T) {
 	assert.False(t, healthy)
 
 	// Level 1 lasts CalmFastBase=3s, so 3s later the route is selectable again.
+	// That elapsed window also decays the ladder back to level 0 (Wave D), so the
+	// next failure climbs to level 1 again rather than jumping to level 2.
 	assert.True(t, IsRouteHealthy(key, now.Add(3*time.Second)))
 
-	require.NoError(t, RecordRetryableFailure(key, "bad_response_status_code", now.Add(3*time.Second)))
+	require.NoError(t, RecordRetryableFailure(key, "bad_response_status_code", FailureSourceUpstream, now.Add(3*time.Second)))
 	var row ChannelModelHealth
 	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
-	assert.Equal(t, 2, row.IsolationLevel, "each retry-eligible failure escalates one level")
+	assert.Equal(t, 1, row.IsolationLevel,
+		"a recovered route restarts the ladder instead of resuming from the residual level")
 	assert.Equal(t, HealthCalm, row.State)
 	require.NotNil(t, row.Until)
-	assert.Equal(t, now.Add(3*time.Second).Unix()+6, *row.Until, "level 2 lasts 6s")
+	assert.Equal(t, now.Add(3*time.Second).Unix()+3, *row.Until, "level 1 lasts 3s")
 }
 
-// TestExpiredIsolationPersistsHealthy verifies that selector-side lazy recovery
-// uses the versioned DB update, rather than merely treating an expired cache
-// entry as healthy forever. A later process restart must not restore isolation.
-func TestExpiredIsolationPersistsHealthy(t *testing.T) {
+// TestExpiredIsolationDecaysAndPersistsHealthy verifies that selector-side lazy
+// recovery uses the versioned DB update, rather than merely treating an expired
+// cache entry as healthy forever, and that the elapsed window also pays down the
+// ladder by one decay step (Wave D). Without the decay, the next failure would
+// resume from the residual level and skip the whole fast band.
+func TestExpiredIsolationDecaysAndPersistsHealthy(t *testing.T) {
 	withRouteHealthDB(t)
 	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
 
@@ -141,7 +155,8 @@ func TestExpiredIsolationPersistsHealthy(t *testing.T) {
 	assert.Equal(t, HealthHealthy, row.State)
 	assert.Nil(t, row.Until)
 	assert.Equal(t, 5, row.Version)
-	assert.Equal(t, 2, row.IsolationLevel, "expiry keeps the escalation ladder")
+	assert.Equal(t, 1, row.IsolationLevel,
+		"an elapsed window pays down one decay step at normal pressure")
 }
 
 // TestDormantExpiryDisableThreshold covers the auto-disable rule: failing again
@@ -170,7 +185,7 @@ func TestDormantExpiryDisableThreshold(t *testing.T) {
 		key := RouteKey{ChannelId: 9101, Model: "claude-3"}
 		dormantRow(t, key, now.Unix()-1)
 
-		require.NoError(t, RecordRetryableFailure(key, "bad_response", now))
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now))
 
 		var row ChannelModelHealth
 		require.NoError(t, DB.Where("channel_id = ?", key.ChannelId).First(&row).Error)
@@ -190,7 +205,7 @@ func TestDormantExpiryDisableThreshold(t *testing.T) {
 		key := RouteKey{ChannelId: 9102, Model: "claude-3"}
 		dormantRow(t, key, now.Unix()-1)
 
-		require.NoError(t, RecordRetryableFailure(key, "bad_response", now))
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now))
 
 		var row ChannelModelHealth
 		require.NoError(t, DB.Where("channel_id = ?", key.ChannelId).First(&row).Error)
@@ -210,8 +225,8 @@ func TestAdminRecoverAndDisable(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	key := RouteKey{ChannelId: 9201, Model: "gemini-2.5-pro"}
 
-	require.NoError(t, RecordRetryableFailure(key, "bad_response", now))
-	require.NoError(t, RecordRetryableFailure(key, "bad_response", now))
+	require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now))
+	require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now))
 	require.False(t, IsRouteHealthy(key, now))
 
 	require.NoError(t, RecoverRoute(key, now))
@@ -244,7 +259,7 @@ func TestRecordRetryableFailureVersionsMonotonically(t *testing.T) {
 
 	seen := map[int]bool{}
 	for i := range 4 {
-		require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(time.Duration(i)*time.Hour)))
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now.Add(time.Duration(i)*time.Hour)))
 		var row ChannelModelHealth
 		require.NoError(t, DB.Where("channel_id = ?", key.ChannelId).First(&row).Error)
 		assert.False(t, seen[row.Version], "version %d reused", row.Version)
@@ -276,7 +291,7 @@ func TestConcurrentRetryableFailureCASContention(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := RecordRetryableFailure(key, "bad_response", now); err != nil {
+			if err := RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now); err != nil {
 				errs <- err
 			}
 		}()
@@ -299,15 +314,22 @@ func TestConcurrentRetryableFailureCASContention(t *testing.T) {
 // verifying the state transitions calm→calm→dormant and the corresponding
 // durations at each step match the configured ladder. This covers #375's
 // requirement for a complete level 4–10 simulation through RecordRetryableFailure.
+//
+// The auto-disable threshold is pinned to 0 here so the ladder runs to its
+// ceiling: with the default threshold of 3, the dormant levels would trip the
+// circuit breaker partway through. That path has its own coverage in
+// TestDormantMultiCycleThresholdAndSibling.
 func TestFullLadderEscalation(t *testing.T) {
 	withRouteHealthDB(t)
-	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+	cfg := operation_setting.DefaultChannelModelHealthSetting()
+	cfg.DormantDisableThreshold = 0
+	withHealthSetting(t, cfg)
 
 	now := time.Unix(1_700_000_000, 0)
 	key := RouteKey{ChannelId: 9501, Model: "ladder-model"}
 
 	for level := 1; level <= 10; level++ {
-		require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(time.Duration(level)*time.Hour)))
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now.Add(time.Duration(level)*time.Hour)))
 
 		var row ChannelModelHealth
 		require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
@@ -320,7 +342,7 @@ func TestFullLadderEscalation(t *testing.T) {
 	}
 
 	// Level 10+ stays dormant with DormantMaxBase.
-	require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(11*time.Hour)))
+	require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now.Add(11*time.Hour)))
 	var finalRow ChannelModelHealth
 	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&finalRow).Error)
 	assert.Equal(t, 11, finalRow.IsolationLevel)
@@ -352,7 +374,7 @@ func TestDormantMultiCycleThresholdAndSibling(t *testing.T) {
 			// Levels 1–9: 9 consecutive failures at different times to avoid
 			// triggering the dormant-expiry counter mid-escalation.
 			for i := range 9 {
-				require.NoError(t, RecordRetryableFailure(key, "bad_response", base.Add(time.Duration(i)*time.Second)))
+				require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, base.Add(time.Duration(i)*time.Second)))
 			}
 			var row ChannelModelHealth
 			require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
@@ -364,7 +386,7 @@ func TestDormantMultiCycleThresholdAndSibling(t *testing.T) {
 
 		// Cycle 1: dormant expired, fail again → count=1, still dormant.
 		driveToExpiredDormant(now)
-		require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(time.Hour)))
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now.Add(time.Hour)))
 		var row1 ChannelModelHealth
 		require.NoError(t, DB.Where("channel_id = ?", key.ChannelId).First(&row1).Error)
 		assert.Equal(t, 1, row1.DormantDisableCount, "first expired-dormant failure")
@@ -374,7 +396,7 @@ func TestDormantMultiCycleThresholdAndSibling(t *testing.T) {
 		assert.True(t, IsRouteHealthy(sibling, now), "sibling unaffected by dormant cycling")
 
 		// Cycle 2: expire and fail → count=2, still not disabled.
-		require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(2*time.Hour)))
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now.Add(2*time.Hour)))
 		var row2 ChannelModelHealth
 		require.NoError(t, DB.Where("channel_id = ?", key.ChannelId).First(&row2).Error)
 		assert.Equal(t, 2, row2.DormantDisableCount)
@@ -382,7 +404,7 @@ func TestDormantMultiCycleThresholdAndSibling(t *testing.T) {
 		assert.True(t, IsRouteHealthy(sibling, now), "sibling still healthy after cycle 2")
 
 		// Cycle 3: expire and fail → count=3, disabled.
-		require.NoError(t, RecordRetryableFailure(key, "bad_response", now.Add(3*time.Hour)))
+		require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now.Add(3*time.Hour)))
 		var row3 ChannelModelHealth
 		require.NoError(t, DB.Where("channel_id = ?", key.ChannelId).First(&row3).Error)
 		assert.Equal(t, 3, row3.DormantDisableCount)
@@ -411,16 +433,16 @@ func TestDormantMultiCycleThresholdAndSibling(t *testing.T) {
 			cycleBase := now.Add(time.Duration(cycle*10000) * time.Second)
 			// Drive to dormant (levels 1-9).
 			for i := range 9 {
-				require.NoError(t, RecordRetryableFailure(key, "bad_response", cycleBase.Add(time.Duration(i)*time.Second)))
+				require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, cycleBase.Add(time.Duration(i)*time.Second)))
 			}
 			// Fail after the dormant window has expired.
-			require.NoError(t, RecordRetryableFailure(key, "bad_response", cycleBase.Add(2000*time.Second)))
-		var row ChannelModelHealth
-		require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
-		assert.Greater(t, row.DormantDisableCount, prevCount, "cycle %d: counter must keep climbing", cycle)
-		prevCount = row.DormantDisableCount
-		assert.NotEqual(t, HealthDisabled, row.State, "threshold 0 never disables")
-		assert.True(t, IsRouteHealthy(sibling, now), "sibling healthy in cycle %d", cycle)
+			require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, cycleBase.Add(2000*time.Second)))
+			var row ChannelModelHealth
+			require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
+			assert.Greater(t, row.DormantDisableCount, prevCount, "cycle %d: counter must keep climbing", cycle)
+			prevCount = row.DormantDisableCount
+			assert.NotEqual(t, HealthDisabled, row.State, "threshold 0 never disables")
+			assert.True(t, IsRouteHealthy(sibling, now), "sibling healthy in cycle %d", cycle)
 		}
 	})
 }
@@ -459,7 +481,8 @@ func TestCacheHydrationAndExpiryPersistence(t *testing.T) {
 	assert.Equal(t, HealthHealthy, row.State, "CAS must persist healthy after expiry")
 	assert.Nil(t, row.Until)
 	assert.Equal(t, 6, row.Version, "version must bump")
-	assert.Equal(t, 3, row.IsolationLevel, "expiry keeps the ladder")
+	assert.Equal(t, 2, row.IsolationLevel,
+		"the elapsed window pays down one decay step while keeping the rest of the ladder")
 
 	// Simulate a second restart: re-hydrate and verify the healthy state survives.
 	ClearRouteHealthCache()
@@ -492,7 +515,7 @@ func TestGetRouteIsolationReportsTransition(t *testing.T) {
 	assert.Zero(t, level)
 	assert.Zero(t, until)
 
-	require.NoError(t, RecordRetryableFailure(key, "do_request_failed", now))
+	require.NoError(t, RecordRetryableFailure(key, "do_request_failed", FailureSourceUpstream, now))
 
 	state, level, until, ok = GetRouteIsolation(key)
 	require.True(t, ok, "an isolated route must expose its snapshot")
@@ -503,7 +526,7 @@ func TestGetRouteIsolationReportsTransition(t *testing.T) {
 
 	// Escalation must be visible through the same accessor, otherwise the log
 	// would keep reporting a stale level.
-	require.NoError(t, RecordRetryableFailure(key, "do_request_failed", now))
+	require.NoError(t, RecordRetryableFailure(key, "do_request_failed", FailureSourceUpstream, now))
 	_, level, _, ok = GetRouteIsolation(key)
 	require.True(t, ok)
 	assert.Equal(t, 2, level, "the accessor must follow the ladder")
@@ -528,7 +551,7 @@ func TestConcurrentFailureNeverLosesUpdate(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := RecordRetryableFailure(key, "bad_response", now); err != nil {
+			if err := RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now); err != nil {
 				errs <- err
 			}
 		}()
@@ -544,4 +567,179 @@ func TestConcurrentFailureNeverLosesUpdate(t *testing.T) {
 	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error)
 	assert.Equal(t, writers, row.IsolationLevel, "every concurrent failure must escalate the ladder exactly once")
 	assert.Equal(t, writers+1, row.Version, "version must advance once per accepted write")
+}
+
+// TestLocalFailureThresholdEscalatesAtThreshold verifies that local failures
+// are counted separately from upstream failures: with LocalFailureThreshold=3,
+// two local failures stay at level 0 with LocalFailureCount=2, and only the
+// third local failure resets the counter and escalates to level 1. Upstream
+// counter must remain zero throughout.
+func TestLocalFailureThresholdEscalatesAtThreshold(t *testing.T) {
+	withRouteHealthDB(t)
+	cfg := operation_setting.DefaultChannelModelHealthSetting()
+	cfg.LocalFailureThreshold = 3
+	withHealthSetting(t, cfg)
+
+	now := time.Unix(1_700_000_000, 0)
+	key := RouteKey{ChannelId: 9120, Model: "local-threshold"}
+
+	// First local failure: count 1, still level 0, still healthy.
+	require.NoError(t, RecordRetryableFailure(key, "no_available_channel", FailureSourceLocal, now))
+	var row1 ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row1).Error)
+	assert.Equal(t, 1, row1.LocalFailureCount, "first local failure: count 1")
+	assert.Equal(t, 0, row1.UpstreamFailureCount, "upstream counter untouched")
+	assert.Equal(t, 0, row1.IsolationLevel, "below threshold: no escalation")
+	assert.Equal(t, HealthHealthy, row1.State, "below threshold: still healthy")
+	assert.True(t, IsRouteHealthy(key, now), "below threshold: route selectable")
+
+	// Second local failure: count 2, still level 0, still healthy.
+	require.NoError(t, RecordRetryableFailure(key, "no_available_channel", FailureSourceLocal, now.Add(time.Second)))
+	var row2 ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row2).Error)
+	assert.Equal(t, 2, row2.LocalFailureCount, "second local failure: count 2")
+	assert.Equal(t, 0, row2.UpstreamFailureCount, "upstream counter still zero")
+	assert.Equal(t, 0, row2.IsolationLevel, "still below threshold: no escalation")
+	assert.Equal(t, HealthHealthy, row2.State)
+
+	// Third local failure: reaches threshold → reset to 0, escalate to level 1.
+	require.NoError(t, RecordRetryableFailure(key, "no_available_channel", FailureSourceLocal, now.Add(2*time.Second)))
+	var row3 ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row3).Error)
+	assert.Equal(t, 0, row3.LocalFailureCount, "threshold reached: local counter reset")
+	assert.Equal(t, 0, row3.UpstreamFailureCount, "upstream counter still zero after local escalation")
+	assert.Equal(t, 1, row3.IsolationLevel, "threshold reached: escalated to level 1")
+	assert.Equal(t, HealthCalm, row3.State)
+	assert.False(t, IsRouteHealthy(key, now.Add(2*time.Second)), "isolated after escalation")
+}
+
+// TestUpstreamFailureThresholdEscalatesWhilePreservingLocalCounter verifies
+// that an upstream failure escalates immediately when UpstreamFailureThreshold=1
+// while the local counter accumulated by prior local failures is preserved.
+func TestUpstreamFailureThresholdEscalatesWhilePreservingLocalCounter(t *testing.T) {
+	withRouteHealthDB(t)
+	cfg := operation_setting.DefaultChannelModelHealthSetting()
+	cfg.LocalFailureThreshold = 3
+	cfg.UpstreamFailureThreshold = 1
+	withHealthSetting(t, cfg)
+
+	now := time.Unix(1_700_000_000, 0)
+	key := RouteKey{ChannelId: 9121, Model: "upstream-preserve-local"}
+
+	// Accumulate 2 local failures (below threshold 3).
+	require.NoError(t, RecordRetryableFailure(key, "no_available_channel", FailureSourceLocal, now))
+	require.NoError(t, RecordRetryableFailure(key, "no_available_channel", FailureSourceLocal, now.Add(time.Second)))
+	var rowA ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&rowA).Error)
+	assert.Equal(t, 2, rowA.LocalFailureCount, "two local failures counted")
+	assert.Equal(t, 0, rowA.IsolationLevel, "local below threshold: no escalation")
+
+	// One upstream failure: threshold 1 → escalate immediately.
+	require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now.Add(2*time.Second)))
+	var rowB ChannelModelHealth
+	require.NoError(t, DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&rowB).Error)
+	assert.Equal(t, 0, rowB.UpstreamFailureCount, "upstream counter reset after escalation")
+	assert.Equal(t, 2, rowB.LocalFailureCount, "local counter preserved across upstream escalation")
+	assert.Equal(t, 1, rowB.IsolationLevel, "upstream threshold 1 escalates immediately")
+	assert.Equal(t, HealthCalm, rowB.State)
+	assert.False(t, IsRouteHealthy(key, now.Add(2*time.Second)))
+}
+
+// TestRecordRetryableFailureRejectsUnknownSource verifies that an invalid
+// FailureSource is rejected before any DB mutation — no row is created, no
+// cache entry is inserted, and the error is returned.
+func TestRecordRetryableFailureRejectsUnknownSource(t *testing.T) {
+	withRouteHealthDB(t)
+	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+
+	now := time.Unix(1_700_000_000, 0)
+	key := RouteKey{ChannelId: 9122, Model: "bad-source"}
+
+	err := RecordRetryableFailure(key, "err", FailureSource("bogus"), now)
+	require.Error(t, err, "unknown source must be rejected")
+	assert.Contains(t, err.Error(), "unknown failure source")
+
+	var count int64
+	require.NoError(t, DB.Model(&ChannelModelHealth{}).Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).Count(&count).Error)
+	assert.Zero(t, count, "no DB row should be created for an invalid source")
+	assert.True(t, IsRouteHealthy(key, now), "no cache entry, route healthy by default")
+}
+
+func TestRouteHealthSeparatesKeysForSameChannelModel(t *testing.T) {
+	withRouteHealthDB(t)
+	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+
+	now := time.Unix(1_700_000_000, 0)
+	failed := RouteKey{ChannelId: 9123, KeyIndex: 0, Model: "key-separated"}
+	healthy := RouteKey{ChannelId: 9123, KeyIndex: 1, Model: "key-separated"}
+
+	require.NoError(t, RecordRetryableFailure(failed, "bad_response", FailureSourceUpstream, now))
+	assert.False(t, IsRouteHealthy(failed, now))
+	assert.True(t, IsRouteHealthy(healthy, now), "one failed key must not isolate a healthy sibling key")
+
+	var count int64
+	require.NoError(t, DB.Model(&ChannelModelHealth{}).Where("channel_id = ? AND model = ?", failed.ChannelId, failed.Model).Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
+// TestRouteWeightMultiplierCalmAndDormant verifies the Wave C soft deprecation
+// contract: calm and dormant routes remain selectable (IsRouteSelectable=true)
+// but receive a weight multiplier below 1.0, while disabled routes are fully
+// excluded (IsRouteSelectable=false, multiplier=0). A healthy route gets 1.0.
+func TestRouteWeightMultiplierCalmAndDormant(t *testing.T) {
+	withRouteHealthDB(t)
+	cfg := operation_setting.DefaultChannelModelHealthSetting()
+	cfg.CalmWeightScale = 50
+	cfg.DormantWeightScale = 10
+	withHealthSetting(t, cfg)
+
+	now := time.Unix(1_700_000_000, 0)
+	healthy := RouteKey{ChannelId: 9130, KeyIndex: 0, Model: "wm-healthy"}
+	calm := RouteKey{ChannelId: 9131, KeyIndex: 0, Model: "wm-calm"}
+	dormant := RouteKey{ChannelId: 9132, KeyIndex: 0, Model: "wm-dormant"}
+	disabled := RouteKey{ChannelId: 9133, KeyIndex: 0, Model: "wm-disabled"}
+
+	// healthy: no isolation row
+	assert.Equal(t, 1.0, RouteWeightMultiplier(healthy))
+	assert.True(t, IsRouteSelectable(healthy))
+
+	// calm: escalate one level, then check multiplier
+	require.NoError(t, RecordRetryableFailure(calm, "bad_response", FailureSourceUpstream, now))
+	assert.InDelta(t, 0.5, RouteWeightMultiplier(calm), 1e-9)
+	assert.True(t, IsRouteSelectable(calm), "calm routes remain selectable")
+
+	// dormant: escalate to level 7+ (dormant range)
+	for i := range 7 {
+		require.NoError(t, RecordRetryableFailure(dormant, "bad_response", FailureSourceUpstream, now.Add(time.Duration(i)*time.Hour)))
+	}
+	assert.InDelta(t, 0.1, RouteWeightMultiplier(dormant), 1e-9)
+	assert.True(t, IsRouteSelectable(dormant), "dormant routes remain selectable")
+
+	// disabled: seed a disabled row directly
+	require.NoError(t, DisableRoute(disabled, now))
+	assert.Equal(t, 0.0, RouteWeightMultiplier(disabled))
+	assert.False(t, IsRouteSelectable(disabled), "disabled routes are excluded")
+}
+
+// TestSoftDepressionKeepsCalmRouteSelectable verifies the end-to-end selection
+// behavior: a calm route with reduced weight must still appear as a candidate,
+// unlike a disabled route which is dropped. With CalmWeightScale=100 the calm
+// route competes at full weight (no degradation), and with CalmWeightScale=0
+// the calm route's weight becomes zero (effectively excluded without being
+// disabled).
+func TestSoftDepressionKeepsCalmRouteSelectable(t *testing.T) {
+	withRouteHealthDB(t)
+	cfg := operation_setting.DefaultChannelModelHealthSetting()
+	cfg.CalmWeightScale = 100
+	withHealthSetting(t, cfg)
+
+	now := time.Unix(1_700_000_000, 0)
+	key := RouteKey{ChannelId: 9140, KeyIndex: 0, Model: "soft-calm"}
+
+	// Escalate to calm (level 1).
+	require.NoError(t, RecordRetryableFailure(key, "bad_response", FailureSourceUpstream, now))
+
+	// With CalmWeightScale=100 the calm route competes at full weight.
+	assert.InDelta(t, 1.0, RouteWeightMultiplier(key), 1e-9)
+	assert.True(t, IsRouteSelectable(key), "calm route is still a candidate")
 }

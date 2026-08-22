@@ -228,6 +228,15 @@ func InitOptionMap() {
 		common.OptionMap["DormantInterval"] = strconv.Itoa(healthCfg.DormantInterval)
 		common.OptionMap["DormantMaxBase"] = strconv.Itoa(healthCfg.DormantMaxBase)
 		common.OptionMap["DormantDisableThreshold"] = strconv.Itoa(healthCfg.DormantDisableThreshold)
+		common.OptionMap["LocalFailureThreshold"] = strconv.Itoa(healthCfg.LocalFailureThreshold)
+		common.OptionMap["UpstreamFailureThreshold"] = strconv.Itoa(healthCfg.UpstreamFailureThreshold)
+		common.OptionMap["CalmWeightScale"] = strconv.Itoa(healthCfg.CalmWeightScale)
+		common.OptionMap["DormantWeightScale"] = strconv.Itoa(healthCfg.DormantWeightScale)
+		common.OptionMap["EmergencyThreshold"] = strconv.Itoa(healthCfg.EmergencyThreshold)
+		common.OptionMap["WarningThreshold"] = strconv.Itoa(healthCfg.WarningThreshold)
+		common.OptionMap["AcceleratedDecayStep"] = strconv.Itoa(healthCfg.AcceleratedDecayStep)
+		common.OptionMap["NormalDecayStep"] = strconv.Itoa(healthCfg.NormalDecayStep)
+		common.OptionMap["KeyProbeEnabled"] = strconv.FormatBool(healthCfg.KeyProbeEnabled)
 	}
 
 	// 自动添加所有注册的模型配置
@@ -337,7 +346,9 @@ func UpdateOptionsBulk(values map[string]string) error {
 
 func updateOptionMap(key string, value string) (err error) {
 	if operation_setting.IsChannelModelHealthOptionKey(key) {
-		if err := operation_setting.UpdateChannelModelHealthSettingValue(key, value); err != nil { return err }
+		if err := operation_setting.UpdateChannelModelHealthSettingValue(key, value); err != nil {
+			return err
+		}
 		common.OptionMapRWMutex.Lock()
 		common.OptionMap[key] = value
 		common.OptionMapRWMutex.Unlock()

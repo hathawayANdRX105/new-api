@@ -111,10 +111,12 @@ func TestGetChannelRespectsExcludeSet(t *testing.T) {
 	assert.Nil(t, got)
 }
 
-// TestGetChannelSkipsIsolatedRoutes proves the state machine reaches the DB path:
-// a (channel, model) route in timed isolation must lose every pick, while an
-// unrelated model on the same channel keeps competing.
-func TestGetChannelSkipsIsolatedRoutes(t *testing.T) {
+// TestGetChannelDeratesIsolatedRoutes proves the state machine reaches the DB
+// selection path. Since Wave C an isolated route is derated rather than dropped:
+// it keeps CalmWeightScale percent of its weight, so it still wins occasional
+// picks (which is the natural half-open probe) while the healthy peer takes the
+// clear majority. Only a disabled route leaves the pool entirely.
+func TestGetChannelDeratesIsolatedRoutes(t *testing.T) {
 	const group, modelName = "db-group", "db-model"
 
 	withAbilityDB(t, group, modelName, []Ability{
@@ -126,16 +128,28 @@ func TestGetChannelSkipsIsolatedRoutes(t *testing.T) {
 	t.Cleanup(ClearRouteHealthCache)
 	// The selectors read the real clock, so the isolation window must be live.
 	now := time.Now()
-	require.NoError(t, RecordRetryableFailure(RouteKey{ChannelId: 9702, Model: modelName}, "bad_response", now))
+	require.NoError(t, RecordRetryableFailure(RouteKey{ChannelId: 9702, Model: modelName}, "bad_response", FailureSourceUpstream, now))
 
+	derated := map[int]int{}
+	for range 400 {
+		got, err := GetChannel(group, modelName, 0, "", nil)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		derated[got.Id]++
+	}
+	assert.Greater(t, derated[9701], derated[9702],
+		"the healthy peer must dominate while the calm route keeps a reduced share")
+
+	// A disabled route is the one state that leaves the candidate set.
+	require.NoError(t, DisableRoute(RouteKey{ChannelId: 9702, Model: modelName}, now))
 	for range 50 {
 		got, err := GetChannel(group, modelName, 0, "", nil)
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.Equal(t, 9701, got.Id, "an isolated route must never be selected")
+		assert.Equal(t, 9701, got.Id, "a disabled route must never be selected")
 	}
 
-	// Admin recovery clears the ladder, so the route competes again immediately.
+	// Admin recovery clears the ladder, so the route competes at full weight again.
 	require.NoError(t, RecoverRoute(RouteKey{ChannelId: 9702, Model: modelName}, now))
 	counts := map[int]int{}
 	for range 400 {

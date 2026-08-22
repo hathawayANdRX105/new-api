@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
@@ -129,11 +130,13 @@ func TestRetryDescendsPriorityTiers(t *testing.T) {
 	}
 }
 
-// TestIsolationActsWithinPriorityTierOnly documents that route isolation is
-// tier-local: an isolated route loses every pick to its peers at the same
-// priority, but isolation never promotes or demotes a channel across tiers.
-// Cross-tier movement is driven solely by retry.
-func TestIsolationActsWithinPriorityTierOnly(t *testing.T) {
+// TestIsolationDeratesWithinPriorityTierOnly documents two independent rules.
+// Isolation is tier-local: it changes how much traffic a route wins against its
+// peers at the same priority, but never moves a channel across tiers — only
+// retry walks tiers. And since Wave C, isolation derates instead of excluding:
+// a calm route keeps CalmWeightScale percent of its weight, so it stays in the
+// pool and the next pick doubles as a live probe.
+func TestIsolationDeratesWithinPriorityTierOnly(t *testing.T) {
 	const group, modelName = "edge-group", "edge-model"
 
 	healthy := testChannel(9301, 10, 100)
@@ -142,12 +145,13 @@ func TestIsolationActsWithinPriorityTierOnly(t *testing.T) {
 	withChannelCacheFixture(t, []*Channel{healthy, isolated, lowerTier}, group, modelName)
 
 	withRouteHealthDB(t)
-	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+	cfg := operation_setting.DefaultChannelModelHealthSetting()
+	withHealthSetting(t, cfg)
 
 	// The selectors read the real clock, so the isolation window must be live.
-	require.NoError(t, RecordRetryableFailure(RouteKey{ChannelId: isolated.Id, Model: modelName}, "bad_response", time.Now()))
+	require.NoError(t, RecordRetryableFailure(RouteKey{ChannelId: isolated.Id, Model: modelName}, "bad_response", FailureSourceUpstream, time.Now()))
 
-	// retry=0 stays inside the top tier, and the isolated peer must never win.
+	// retry=0 stays inside the top tier; the calm peer competes at a discount.
 	counts := map[int]int{}
 	for range 400 {
 		got, err := GetRandomSatisfiedChannel(group, modelName, 0, "", nil)
@@ -158,8 +162,10 @@ func TestIsolationActsWithinPriorityTierOnly(t *testing.T) {
 
 	assert.Zero(t, counts[lowerTier.Id],
 		"a lower tier must never be reached while retry is 0, regardless of health")
-	assert.Zero(t, counts[isolated.Id], "an isolated route is excluded, not merely derated")
-	assert.Equal(t, 400, counts[healthy.Id], "the healthy peer absorbs the whole tier's traffic")
+	assert.Positive(t, counts[isolated.Id],
+		"a calm route keeps a reduced share, so it stays probeable instead of being excluded")
+	assert.Greater(t, counts[healthy.Id], counts[isolated.Id],
+		"the healthy peer must still take the majority of the tier's traffic")
 
 	// retry=1 still descends to the lower tier even though the top tier holds a
 	// perfectly healthy channel: health never overrides the tier walk.
@@ -167,4 +173,33 @@ func TestIsolationActsWithinPriorityTierOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, lowerTier.Id, got.Id)
+}
+
+// TestGetNextEnabledKeySkipsIsolatedKey covers the Wave B execution contract: a
+// channel is selected as a whole, but the key picked inside it must avoid the
+// isolated key index while a healthy sibling key exists.
+func TestGetNextEnabledKeySkipsIsolatedKey(t *testing.T) {
+	withRouteHealthDB(t)
+	withHealthSetting(t, operation_setting.DefaultChannelModelHealthSetting())
+
+	channel := &Channel{
+		Id:  9124,
+		Key: "key-a\nkey-b",
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyMode: constant.MultiKeyModeRandom,
+		},
+	}
+	now := time.Now()
+	require.NoError(t, RecordRetryableFailure(RouteKey{ChannelId: channel.Id, KeyIndex: 0, Model: "key-model"}, "bad_response", FailureSourceUpstream, now))
+
+	for range 8 {
+		key, index, apiErr := channel.GetNextEnabledKey("key-model")
+		// apiErr is a typed pointer, so it must be compared with Nil rather than
+		// NoError: a nil *types.NewAPIError still yields a non-nil error interface.
+		require.Nil(t, apiErr)
+		assert.Equal(t, 1, index, "the isolated key index must lose every pick")
+		assert.Equal(t, "key-b", key)
+	}
 }

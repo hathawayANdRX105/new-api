@@ -359,6 +359,7 @@ export async function resetCodexUsage(
 
 export type ChannelModelHealthRow = {
   channel_id: number
+  key_index: number
   model: string
   state: 'healthy' | 'calm' | 'dormant' | 'disabled'
   isolation_level: number
@@ -375,23 +376,21 @@ export async function getChannelModelHealth(channelId: number): Promise<{
   message?: string
   data?: ChannelModelHealthRow[]
 }> {
-  const res = await api.get(
-    `/api/channel/health?channel_id=${channelId}`,
-    channelActionConfig({ disableDuplicate: true })
-  )
+  const res = await api.get(`/api/channel/health?channel_id=${channelId}`)
   return res.data
 }
 
 export async function updateChannelModelHealth(
   action: 'disable' | 'recover',
   channelId: number,
+  keyIndex: number,
   model: string
 ): Promise<{ success: boolean; message?: string }> {
-  const res = await api.post(
-    `/api/channel/health/${action}`,
-    { channel_id: channelId, model },
-    channelActionConfig()
-  )
+  const res = await api.post(`/api/channel/health/${action}`, {
+    channel_id: channelId,
+    key_index: keyIndex,
+    model,
+  })
   return res.data
 }
 

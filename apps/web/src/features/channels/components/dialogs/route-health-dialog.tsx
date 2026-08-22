@@ -65,7 +65,7 @@ export function RouteHealthDialog({
   const { currentRow } = useChannels()
   const [rows, setRows] = useState<ChannelModelHealthRow[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [pendingModel, setPendingModel] = useState<string | null>(null)
+  const [pendingRoute, setPendingRoute] = useState<string | null>(null)
 
   const channelId = currentRow?.id
 
@@ -92,11 +92,21 @@ export function RouteHealthDialog({
     load()
   }, [open, load])
 
-  const runAction = async (action: 'disable' | 'recover', model: string) => {
+  const runAction = async (
+    action: 'disable' | 'recover',
+    keyIndex: number,
+    model: string
+  ) => {
     if (!channelId) return
-    setPendingModel(model)
+    const routeId = `${keyIndex}:${model}`
+    setPendingRoute(routeId)
     try {
-      const res = await updateChannelModelHealth(action, channelId, model)
+      const res = await updateChannelModelHealth(
+        action,
+        channelId,
+        keyIndex,
+        model
+      )
       if (!res.success) {
         throw new Error(res.message || t('Failed to update route health'))
       }
@@ -111,7 +121,7 @@ export function RouteHealthDialog({
           : t('Failed to update route health')
       )
     } finally {
-      setPendingModel(null)
+      setPendingRoute(null)
     }
   }
 
@@ -165,6 +175,9 @@ export function RouteHealthDialog({
                     {t('Model')}
                   </th>
                   <th className='px-3 py-2 text-left font-medium'>
+                    {t('Key index')}
+                  </th>
+                  <th className='px-3 py-2 text-left font-medium'>
                     {t('State')}
                   </th>
                   <th className='px-3 py-2 text-left font-medium'>
@@ -183,8 +196,9 @@ export function RouteHealthDialog({
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.model} className='border-t'>
+                  <tr key={`${row.key_index}:${row.model}`} className='border-t'>
                     <td className='px-3 py-2 font-mono text-xs'>{row.model}</td>
+                    <td className='px-3 py-2 font-mono text-xs'>{row.key_index}</td>
                     <td className='px-3 py-2'>
                       <StatusBadge variant={STATE_TONE[row.state]}>
                         {row.state}
@@ -200,8 +214,10 @@ export function RouteHealthDialog({
                         <Button
                           variant='outline'
                           size='sm'
-                          disabled={pendingModel === row.model}
-                          onClick={() => runAction('recover', row.model)}
+                          disabled={pendingRoute === `${row.key_index}:${row.model}`}
+                          onClick={() =>
+                            runAction('recover', row.key_index, row.model)
+                          }
                         >
                           <RotateCcw className='mr-1 size-3.5' />
                           {t('Recover')}
@@ -211,10 +227,12 @@ export function RouteHealthDialog({
                           size='sm'
                           className='text-destructive hover:text-destructive'
                           disabled={
-                            pendingModel === row.model ||
+                            pendingRoute === `${row.key_index}:${row.model}` ||
                             row.state === 'disabled'
                           }
-                          onClick={() => runAction('disable', row.model)}
+                          onClick={() =>
+                            runAction('disable', row.key_index, row.model)
+                          }
                         >
                           <PowerOff className='mr-1 size-3.5' />
                           {t('Disable')}

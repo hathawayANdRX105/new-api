@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
 )
 
@@ -19,31 +20,49 @@ const (
 
 type RouteKey struct {
 	ChannelId int
+	KeyIndex  int
 	Model     string
 }
 
 type ChannelModelHealth struct {
-	ChannelId           int    `gorm:"primaryKey"`
-	Model               string `gorm:"primaryKey;size:255"`
-	State               string `gorm:"size:16;not null;default:healthy"`
-	IsolationLevel      int    `gorm:"not null;default:0"`
-	Until               *int64 `gorm:"bigint"`
-	Version             int    `gorm:"not null;default:1"`
-	DormantDisableCount int    `gorm:"not null;default:0"`
-	LastErrorCode       string `gorm:"size:64"`
-	LastErrorAt         *int64 `gorm:"bigint"`
-	LastSuccessAt       *int64 `gorm:"bigint"`
-	UpdatedAt           int64  `gorm:"bigint"`
+	ChannelId            int    `gorm:"primaryKey"`
+	KeyIndex             int    `gorm:"primaryKey;not null;default:0"`
+	Model                string `gorm:"primaryKey;size:255"`
+	State                string `gorm:"size:16;not null;default:healthy"`
+	IsolationLevel       int    `gorm:"not null;default:0"`
+	Until                *int64 `gorm:"bigint"`
+	Version              int    `gorm:"not null;default:1"`
+	DormantDisableCount  int    `gorm:"not null;default:0"`
+	LocalFailureCount    int    `gorm:"not null;default:0"`
+	UpstreamFailureCount int    `gorm:"not null;default:0"`
+	LastErrorCode        string `gorm:"size:64"`
+	LastErrorAt          *int64 `gorm:"bigint"`
+	LastSuccessAt        *int64 `gorm:"bigint"`
+	UpdatedAt            int64  `gorm:"bigint"`
 }
+
+// FailureSource distinguishes whether a retry-eligible failure originated
+// locally (our own infrastructure: no available channel, request parse error,
+// quota rejection) or upstream (the provider returned an error status). Only
+// upstream failures reflect channel health; local failures are a different
+// signal and may need a higher threshold before isolating a route.
+type FailureSource string
+
+const (
+	FailureSourceLocal    FailureSource = "local"
+	FailureSourceUpstream FailureSource = "upstream"
+)
 
 func (ChannelModelHealth) TableName() string { return "channel_model_health" }
 
 type routeHealthState struct {
-	State               string
-	IsolationLevel      int
-	Until               *int64
-	Version             int
-	DormantDisableCount int
+	State                string
+	IsolationLevel       int
+	Until                *int64
+	Version              int
+	DormantDisableCount  int
+	LocalFailureCount    int
+	UpstreamFailureCount int
 }
 
 var routeHealthIDM = map[RouteKey]*routeHealthState{}
@@ -62,21 +81,41 @@ func IsRouteHealthy(key RouteKey, now time.Time) bool {
 	if state.Until == nil || *state.Until > now.Unix() {
 		return false
 	}
-
+	step := decayStep(key.Model)
+	if step <= 0 {
+		step = 1
+	}
+	newLevel := state.IsolationLevel - step
+	if newLevel < 0 {
+		newLevel = 0
+	}
+	var newDormantCount int
+	if newLevel <= 6 {
+		newDormantCount = 0
+	} else {
+		newDormantCount = state.DormantDisableCount
+	}
 	result := DB.Model(&ChannelModelHealth{}).
-		Where("channel_id = ? AND model = ? AND version = ?", key.ChannelId, key.Model, state.Version).
-		Updates(map[string]interface{}{"state": HealthHealthy, "until": nil, "version": state.Version + 1, "updated_at": now.Unix()})
+		Where("channel_id = ? AND key_index = ? AND model = ? AND version = ?", key.ChannelId, key.KeyIndex, key.Model, state.Version).
+		Updates(map[string]interface{}{
+			"state":                 HealthHealthy,
+			"until":                 nil,
+			"isolation_level":       gorm.Expr("CASE WHEN isolation_level - ? <= 0 THEN 0 ELSE isolation_level - ? END", step, step),
+			"dormant_disable_count": gorm.Expr("CASE WHEN isolation_level - ? <= 6 THEN 0 ELSE dormant_disable_count END", step),
+			"version":               state.Version + 1,
+			"updated_at":            now.Unix(),
+		})
 	if result.Error != nil {
 		common.SysError("failed to expire channel model health: " + result.Error.Error())
 		return false
 	}
 	if result.RowsAffected != 0 {
-		cacheHealth(&ChannelModelHealth{ChannelId: key.ChannelId, Model: key.Model, State: HealthHealthy, IsolationLevel: state.IsolationLevel, Version: state.Version + 1, DormantDisableCount: state.DormantDisableCount})
+		cacheHealth(&ChannelModelHealth{ChannelId: key.ChannelId, KeyIndex: key.KeyIndex, Model: key.Model, State: HealthHealthy, IsolationLevel: newLevel, Version: state.Version + 1, DormantDisableCount: newDormantCount, LocalFailureCount: state.LocalFailureCount, UpstreamFailureCount: state.UpstreamFailureCount})
 		return true
 	}
 
 	var row ChannelModelHealth
-	if err := DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error; err != nil {
+	if err := DB.Where("channel_id = ? AND key_index = ? AND model = ?", key.ChannelId, key.KeyIndex, key.Model).First(&row).Error; err != nil {
 		common.SysError("failed to refresh channel model health after expiry CAS: " + err.Error())
 		return false
 	}
@@ -108,15 +147,74 @@ func GetRouteIsolation(key RouteKey) (state string, level int, until int64, ok b
 	}
 	return cached.State, cached.IsolationLevel, until, true
 }
+
+// RouteWeightMultiplier returns the fraction of a route's base weight it should
+// retain in weighted-random selection, based on its current isolation state:
+//   - healthy/disabled-expired: 1.0 (full weight)
+//   - calm: configured CalmWeightScale percentage (e.g. 0.5 for 50%)
+//   - dormant: configured DormantWeightScale percentage (e.g. 0.1 for 10%)
+//   - disabled: 0.0 (excluded entirely — only disabled routes are dropped)
+//
+// This implements Wave C soft deprecation: calm and dormant routes remain
+// selectable candidates but at reduced traffic share, instead of being
+// hard-excluded like disabled routes.
+func RouteWeightMultiplier(key RouteKey) float64 {
+	routeHealthLock.RLock()
+	state := routeHealthIDM[key]
+	routeHealthLock.RUnlock()
+	if state == nil {
+		return 1.0
+	}
+	if state.State == HealthDisabled {
+		return 0.0
+	}
+	// Emergency pressure ignores isolation entirely: with almost no healthy
+	// units left, derating the survivors only starves the model further.
+	if modelPressureLevel(key.Model) == PressureEmergency {
+		return 1.0
+	}
+	cfg := operation_setting.GetChannelModelHealthSetting()
+	switch state.State {
+	case HealthCalm:
+		return float64(cfg.CalmWeightScale) / 100.0
+	case HealthDormant:
+		return float64(cfg.DormantWeightScale) / 100.0
+	default:
+		return 1.0
+	}
+}
+
+// IsRouteSelectable returns false only when a route is disabled (hard
+// excluded). Calm and dormant routes remain selectable at a reduced weight,
+// so this replaces the old IsRouteHealthy binary filter in the selection paths.
+func IsRouteSelectable(key RouteKey) bool {
+	routeHealthLock.RLock()
+	state := routeHealthIDM[key]
+	routeHealthLock.RUnlock()
+	if state == nil {
+		return true
+	}
+	return state.State != HealthDisabled
+}
 func cacheHealth(row *ChannelModelHealth) {
 	var until *int64
 	if row.Until != nil {
 		v := *row.Until
 		until = &v
 	}
+	key := RouteKey{ChannelId: row.ChannelId, KeyIndex: row.KeyIndex, Model: row.Model}
 	routeHealthLock.Lock()
-	routeHealthIDM[RouteKey{row.ChannelId, row.Model}] = &routeHealthState{row.State, row.IsolationLevel, until, row.Version, row.DormantDisableCount}
+	previous := HealthHealthy
+	if cached := routeHealthIDM[key]; cached != nil {
+		previous = cached.State
+	}
+	routeHealthIDM[key] = &routeHealthState{row.State, row.IsolationLevel, until, row.Version, row.DormantDisableCount, row.LocalFailureCount, row.UpstreamFailureCount}
 	routeHealthLock.Unlock()
+	// Every accepted state write funnels through here, so this is the single
+	// place the pool-pressure counter needs to observe a transition. It runs
+	// after routeHealthLock is released: pressureOnStateChange takes its own
+	// lock and must never nest inside this one.
+	pressureOnStateChange(key, previous, row.State)
 }
 func ClearRouteHealthCache() {
 	routeHealthLock.Lock()
@@ -140,17 +238,22 @@ func InitChannelModelHealthCache() {
 			value := *row.Until
 			until = &value
 		}
-		cache[RouteKey{ChannelId: row.ChannelId, Model: row.Model}] = &routeHealthState{
-			State:               row.State,
-			IsolationLevel:      row.IsolationLevel,
-			Until:               until,
-			Version:             row.Version,
-			DormantDisableCount: row.DormantDisableCount,
+		cache[RouteKey{ChannelId: row.ChannelId, KeyIndex: row.KeyIndex, Model: row.Model}] = &routeHealthState{
+			State:                row.State,
+			IsolationLevel:       row.IsolationLevel,
+			Until:                until,
+			Version:              row.Version,
+			DormantDisableCount:  row.DormantDisableCount,
+			LocalFailureCount:    row.LocalFailureCount,
+			UpstreamFailureCount: row.UpstreamFailureCount,
 		}
 	}
 	routeHealthLock.Lock()
 	routeHealthIDM = cache
 	routeHealthLock.Unlock()
+	// The pressure denominator is derived from the ability set, so it has to be
+	// rebuilt whenever the persisted isolation state is (re)hydrated.
+	pressureRecomputeTotals()
 	common.SysLog("channel model health cache loaded from database")
 }
 
@@ -184,20 +287,91 @@ func casBackoff(attempt int) {
 	time.Sleep(time.Duration(attempt) * 200 * time.Microsecond)
 }
 
-// RecordRetryableFailure persists one retry-eligible failure using optimistic CAS.
-func RecordRetryableFailure(key RouteKey, errorCode string, now time.Time) error {
+// RecordRetryableFailure persists one retry-eligible failure using optimistic
+// CAS. The source determines which counter (local or upstream) is incremented;
+// only the selected counter advances. Below its threshold the failure is
+// counted without escalating isolation. At the threshold the selected counter
+// resets to zero and the route escalates one ladder step — the other counter
+// is preserved so a burst of local errors never masks upstream degradation.
+func RecordRetryableFailure(key RouteKey, errorCode string, source FailureSource, now time.Time) error {
 	cfg := operation_setting.GetChannelModelHealthSetting()
+	var threshold int
+	var countColumn string
+	switch source {
+	case FailureSourceLocal:
+		threshold = cfg.LocalFailureThreshold
+		countColumn = "local_failure_count"
+	case FailureSourceUpstream:
+		threshold = cfg.UpstreamFailureThreshold
+		countColumn = "upstream_failure_count"
+	default:
+		return errors.New("unknown failure source: " + string(source))
+	}
 	for attempt := 0; attempt < casMaxAttempts; attempt++ {
 		casBackoff(attempt)
 		var row ChannelModelHealth
-		if err := DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error; err != nil {
+		if err := DB.Where("channel_id = ? AND key_index = ? AND model = ?", key.ChannelId, key.KeyIndex, key.Model).First(&row).Error; err != nil {
 			if err != gorm.ErrRecordNotFound {
 				return err
 			}
-			row = ChannelModelHealth{ChannelId: key.ChannelId, Model: key.Model, State: HealthHealthy, Version: 1}
+			row = ChannelModelHealth{ChannelId: key.ChannelId, KeyIndex: key.KeyIndex, Model: key.Model, State: HealthHealthy, Version: 1}
 			if err := DB.Create(&row).Error; err != nil {
 				continue
 			}
+		}
+		var newCount int
+		if source == FailureSourceLocal {
+			newCount = row.LocalFailureCount + 1
+		} else {
+			newCount = row.UpstreamFailureCount + 1
+		}
+		if newCount < threshold {
+			q := DB.Model(&ChannelModelHealth{}).Where("channel_id = ? AND key_index = ? AND model = ? AND version = ?", key.ChannelId, key.KeyIndex, key.Model, row.Version).Updates(map[string]interface{}{
+				countColumn:       newCount,
+				"last_error_code": errorCode,
+				"last_error_at":   now.Unix(),
+				"version":         row.Version + 1,
+				"updated_at":      now.Unix(),
+			})
+			if q.Error != nil {
+				return q.Error
+			}
+			if q.RowsAffected == 0 {
+				continue
+			}
+			if source == FailureSourceLocal {
+				row.LocalFailureCount = newCount
+			} else {
+				row.UpstreamFailureCount = newCount
+			}
+			row.Version++
+			row.LastErrorCode = errorCode
+			row.UpdatedAt = now.Unix()
+			cacheHealth(&row)
+			return nil
+		}
+		// Warning and emergency pressure forbid new isolation: the pool is
+		// already thin, and ejecting another unit is what emptied it in the v1
+		// incident. The failure is still counted, so the ladder resumes as soon
+		// as availability recovers.
+		if modelPressureLevel(key.Model) != PressureNormal {
+			q := DB.Model(&ChannelModelHealth{}).Where("channel_id = ? AND key_index = ? AND model = ? AND version = ?", key.ChannelId, key.KeyIndex, key.Model, row.Version).Updates(map[string]interface{}{
+				"last_error_code": errorCode,
+				"last_error_at":   now.Unix(),
+				"version":         row.Version + 1,
+				"updated_at":      now.Unix(),
+			})
+			if q.Error != nil {
+				return q.Error
+			}
+			if q.RowsAffected == 0 {
+				continue
+			}
+			row.Version++
+			row.LastErrorCode, row.UpdatedAt = errorCode, now.Unix()
+			cacheHealth(&row)
+			maybeEmergencyRecover(key.Model, now)
+			return nil
 		}
 		level := row.IsolationLevel + 1
 		state, seconds := isolationDuration(level, cfg)
@@ -212,7 +386,7 @@ func RecordRetryableFailure(key RouteKey, errorCode string, now time.Time) error
 			deadline := now.Unix() + seconds
 			until = &deadline
 		}
-		q := DB.Model(&ChannelModelHealth{}).Where("channel_id = ? AND model = ? AND version = ?", key.ChannelId, key.Model, row.Version).Updates(map[string]interface{}{"state": state, "isolation_level": level, "until": until, "version": row.Version + 1, "dormant_disable_count": row.DormantDisableCount, "last_error_code": errorCode, "last_error_at": now.Unix(), "updated_at": now.Unix()})
+		q := DB.Model(&ChannelModelHealth{}).Where("channel_id = ? AND key_index = ? AND model = ? AND version = ?", key.ChannelId, key.KeyIndex, key.Model, row.Version).Updates(map[string]interface{}{"state": state, "isolation_level": level, "until": until, "version": row.Version + 1, "dormant_disable_count": row.DormantDisableCount, countColumn: 0, "last_error_code": errorCode, "last_error_at": now.Unix(), "updated_at": now.Unix()})
 		if q.Error != nil {
 			return q.Error
 		}
@@ -220,7 +394,92 @@ func RecordRetryableFailure(key RouteKey, errorCode string, now time.Time) error
 			continue
 		}
 		row.State, row.IsolationLevel, row.Until, row.Version = state, level, until, row.Version+1
+		if source == FailureSourceLocal {
+			row.LocalFailureCount = 0
+		} else {
+			row.UpstreamFailureCount = 0
+		}
 		row.LastErrorCode, row.UpdatedAt = errorCode, now.Unix()
+		cacheHealth(&row)
+		if state == HealthDisabled {
+			// The unit tripped the auto-disable threshold. Verifying the key
+			// asynchronously keeps the request path off an upstream round trip,
+			// and an inconclusive probe leaves the ladder untouched.
+			gopool.Go(func() { verifyKeyAndCascade(key.ChannelId, key.KeyIndex, now) })
+		}
+		maybeEmergencyRecover(key.Model, now)
+		return nil
+	}
+	return errors.New("channel model health state changed concurrently")
+}
+
+// RecordSuccess records one successful request: stamps last_success_at and
+// decays isolation_level by decayStep(key.Model). At level <= 0 the route
+// returns to healthy with until cleared. A disabled route is immune — it
+// returns nil without touching state/level. A missing row is treated as
+// already healthy: a success must not conjure an isolation record. When the
+// level falls back into the calm band (<= 6) the dormant_disable_count is
+// zeroed, fixing the v1 bug where the counter only ever increased.
+func RecordSuccess(key RouteKey, now time.Time) error {
+	step := decayStep(key.Model)
+	if step <= 0 {
+		step = 1
+	}
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		casBackoff(attempt)
+		var row ChannelModelHealth
+		if err := DB.Where("channel_id = ? AND key_index = ? AND model = ?", key.ChannelId, key.KeyIndex, key.Model).First(&row).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return nil
+			}
+			return err
+		}
+		if row.State == HealthDisabled {
+			return nil
+		}
+		newLevel := row.IsolationLevel - step
+		if newLevel < 0 {
+			newLevel = 0
+		}
+		newState := row.State
+		var newUntil *int64
+		if newLevel <= 0 {
+			newState = HealthHealthy
+			newUntil = nil
+		} else {
+			newUntil = row.Until
+		}
+		var newDormantCount int
+		if newLevel <= 6 {
+			newDormantCount = 0
+		} else {
+			newDormantCount = row.DormantDisableCount
+		}
+		q := DB.Model(&ChannelModelHealth{}).
+			Where("channel_id = ? AND key_index = ? AND model = ? AND version = ?", key.ChannelId, key.KeyIndex, key.Model, row.Version).
+			Updates(map[string]interface{}{
+				"last_success_at":       now.Unix(),
+				"isolation_level":       newLevel,
+				"state":                 newState,
+				"until":                 newUntil,
+				"dormant_disable_count": newDormantCount,
+				"version":               row.Version + 1,
+				"updated_at":            now.Unix(),
+			})
+		if q.Error != nil {
+			return q.Error
+		}
+		if q.RowsAffected == 0 {
+			continue
+		}
+		row.IsolationLevel = newLevel
+		row.State = newState
+		row.Until = newUntil
+		row.Version++
+		row.DormantDisableCount = newDormantCount
+		ts := now.Unix()
+		row.LastSuccessAt = &ts
+		row.UpdatedAt = now.Unix()
 		cacheHealth(&row)
 		return nil
 	}
@@ -237,16 +496,16 @@ func updateRouteState(key RouteKey, state string, level int, until *int64, dorma
 	for attempt := 0; attempt < casMaxAttempts; attempt++ {
 		casBackoff(attempt)
 		var row ChannelModelHealth
-		if err := DB.Where("channel_id = ? AND model = ?", key.ChannelId, key.Model).First(&row).Error; err != nil {
+		if err := DB.Where("channel_id = ? AND key_index = ? AND model = ?", key.ChannelId, key.KeyIndex, key.Model).First(&row).Error; err != nil {
 			if err != gorm.ErrRecordNotFound {
 				return err
 			}
-			row = ChannelModelHealth{ChannelId: key.ChannelId, Model: key.Model, State: HealthHealthy, Version: 1}
+			row = ChannelModelHealth{ChannelId: key.ChannelId, KeyIndex: key.KeyIndex, Model: key.Model, State: HealthHealthy, Version: 1}
 			if err := DB.Create(&row).Error; err != nil {
 				continue
 			}
 		}
-		q := DB.Model(&ChannelModelHealth{}).Where("channel_id = ? AND model = ? AND version = ?", key.ChannelId, key.Model, row.Version).Updates(map[string]interface{}{"state": state, "isolation_level": level, "until": until, "version": row.Version + 1, "dormant_disable_count": dormantCount, "updated_at": now.Unix()})
+		q := DB.Model(&ChannelModelHealth{}).Where("channel_id = ? AND key_index = ? AND model = ? AND version = ?", key.ChannelId, key.KeyIndex, key.Model, row.Version).Updates(map[string]interface{}{"state": state, "isolation_level": level, "until": until, "version": row.Version + 1, "dormant_disable_count": dormantCount, "updated_at": now.Unix()})
 		if q.Error != nil {
 			return q.Error
 		}
@@ -265,10 +524,123 @@ func updateRouteState(key RouteKey, state string, level int, until *int64, dorma
 // panel needs; 0 returns every row for a system-wide view.
 func ListChannelModelHealth(channelID int) ([]ChannelModelHealth, error) {
 	var rows []ChannelModelHealth
-	query := DB.Order("channel_id, model")
+	query := DB.Order("channel_id, key_index, model")
 	if channelID > 0 {
 		query = query.Where("channel_id = ?", channelID)
 	}
 	err := query.Find(&rows).Error
 	return rows, err
+}
+
+// deleteRouteHealthByChannelIDsWithTx drops every isolation row owned by the
+// given channels inside the caller's transaction, then evicts the mirrored
+// process cache. Without this, deleting a channel leaves ghost rows behind: a
+// later channel reusing the same auto-increment id would inherit a dormant
+// state it never earned, and the rows would keep inflating the pool-pressure
+// denominator. The cache is cleared even if the outer transaction rolls back,
+// which is the safe direction: a cache miss counts as healthy, so the worst
+// outcome is a route serving traffic it would otherwise have been isolated
+// from, never a healthy route being suppressed.
+func deleteRouteHealthByChannelIDsWithTx(tx *gorm.DB, ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if tx.Migrator().HasTable(&ChannelModelHealth{}) {
+		if err := tx.Where("channel_id IN ?", ids).Delete(&ChannelModelHealth{}).Error; err != nil {
+			return err
+		}
+	}
+	doomed := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		doomed[id] = struct{}{}
+	}
+	routeHealthLock.Lock()
+	removed := make([]RouteKey, 0, len(routeHealthIDM))
+	for key := range routeHealthIDM {
+		if _, ok := doomed[key.ChannelId]; ok {
+			removed = append(removed, key)
+			delete(routeHealthIDM, key)
+		}
+	}
+	routeHealthLock.Unlock()
+	// The isolation rows are gone, so the units they represented must leave the
+	// pressure denominator too, or availability stays understated forever.
+	// pressureOnRemove takes its own lock, so it runs outside routeHealthLock.
+	for _, key := range removed {
+		pressureOnRemove(key)
+	}
+	return nil
+}
+
+// deleteRouteHealthNotInModelsWithTx drops the isolation rows of models the
+// channel no longer serves and keeps the state of the models it still does. An
+// empty list means the channel serves nothing, which is a full clear. This is a
+// NOT IN filter rather than a delete-and-rebuild on purpose: editing a
+// channel's model list must not reset isolation that is currently in effect for
+// the models that survived the edit.
+func deleteRouteHealthNotInModelsWithTx(tx *gorm.DB, channelID int, models []string) error {
+	kept := make(map[string]struct{}, len(models))
+	names := make([]string, 0, len(models))
+	for _, name := range models {
+		if name == "" {
+			continue
+		}
+		if _, dup := kept[name]; dup {
+			continue
+		}
+		kept[name] = struct{}{}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return deleteRouteHealthByChannelIDsWithTx(tx, []int{channelID})
+	}
+	if tx.Migrator().HasTable(&ChannelModelHealth{}) {
+		if err := tx.Where("channel_id = ? AND model NOT IN ?", channelID, names).Delete(&ChannelModelHealth{}).Error; err != nil {
+			return err
+		}
+	}
+	routeHealthLock.Lock()
+	removed := make([]RouteKey, 0, len(routeHealthIDM))
+	for key := range routeHealthIDM {
+		if key.ChannelId != channelID {
+			continue
+		}
+		if _, ok := kept[key.Model]; !ok {
+			removed = append(removed, key)
+			delete(routeHealthIDM, key)
+		}
+	}
+	routeHealthLock.Unlock()
+	for _, key := range removed {
+		pressureOnRemove(key)
+	}
+	return nil
+}
+
+// deleteRouteHealthOutsideKeyRangeWithTx removes health rows for keys that no
+// longer exist after a channel key-list update. A single-key channel keeps only
+// index zero.
+func deleteRouteHealthOutsideKeyRangeWithTx(tx *gorm.DB, channelID, multiKeySize int) error {
+	limit := multiKeySize
+	if limit <= 0 {
+		limit = 1
+	}
+	if tx.Migrator().HasTable(&ChannelModelHealth{}) {
+		if err := tx.Where("channel_id = ? AND key_index >= ?", channelID, limit).Delete(&ChannelModelHealth{}).Error; err != nil {
+			return err
+		}
+	}
+	routeHealthLock.Lock()
+	removed := make([]RouteKey, 0, len(routeHealthIDM))
+	for key := range routeHealthIDM {
+		if key.ChannelId == channelID && key.KeyIndex >= limit {
+			removed = append(removed, key)
+			delete(routeHealthIDM, key)
+		}
+	}
+	routeHealthLock.Unlock()
+	for _, key := range removed {
+		pressureOnRemove(key)
+	}
+	return nil
 }

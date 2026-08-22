@@ -172,7 +172,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 
 	filtered := targetChannels[:0]
 	for _, channel := range targetChannels {
-		if IsRouteHealthy(RouteKey{ChannelId: channel.Id, Model: model}, time.Now()) {
+		if channelRouteSelectable(channel.Id, channel.ChannelInfo.MultiKeySize, model) {
 			filtered = append(filtered, channel)
 		}
 	}
@@ -187,7 +187,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	var weights []float64
 	var totalWeight float64
 	for _, ch := range targetChannels {
-		weight := float64(routingBaseWeight(ch.GetWeight()))
+		weight := float64(routingBaseWeight(ch.GetWeight())) * channelRouteWeightFactor(ch.Id, ch.ChannelInfo.MultiKeySize, model)
 		weights = append(weights, weight)
 		totalWeight += weight
 	}

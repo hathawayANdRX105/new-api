@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
-	"time"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -135,9 +135,14 @@ func GetChannel(group string, model string, retry int, requestPath string, exclu
 	if len(abilities) == 0 {
 		return nil, nil
 	}
+	candidateIDs := make([]int, 0, len(abilities))
+	for _, ability := range abilities {
+		candidateIDs = append(candidateIDs, ability.ChannelId)
+	}
+	keyCounts := channelKeyCounts(candidateIDs)
 	filtered := abilities[:0]
 	for _, ability := range abilities {
-		if IsRouteHealthy(RouteKey{ChannelId: ability.ChannelId, Model: model}, time.Now()) {
+		if channelRouteSelectable(ability.ChannelId, keyCounts[ability.ChannelId], model) {
 			filtered = append(filtered, ability)
 		}
 	}
@@ -149,7 +154,7 @@ func GetChannel(group string, model string, retry int, requestPath string, exclu
 	var weights []float64
 	var totalWeight float64
 	for _, ability := range abilities {
-		weight := float64(routingBaseWeight(int(ability.Weight)))
+		weight := float64(routingBaseWeight(int(ability.Weight))) * channelRouteWeightFactor(ability.ChannelId, keyCounts[ability.ChannelId], model)
 		weights = append(weights, weight)
 		totalWeight += weight
 	}
@@ -332,6 +337,22 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		}
 	}
 
+	// The ability rows were rebuilt from the channel's current model list, so any
+	// isolation row for a model that is no longer declared is unreachable by the
+	// selectors and would only survive as a ghost row. Models that survived the
+	// edit keep their isolation state. EditChannelByTag reaches this through the
+	// same call, so it needs no separate wiring.
+	if err = deleteRouteHealthNotInModelsWithTx(tx, channel.Id, models_); err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
+
+	// The ability set is the pressure denominator, so a rebuilt model list must
+	// refresh it; otherwise a model that gained or lost channels keeps stale
+	// availability and the three-tier thresholds fire on the wrong ratio.
+	pressureRecomputeTotals()
 	// 如果是新创建的事务，需要提交
 	if isNewTx {
 		return tx.Commit().Error

@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -196,16 +197,14 @@ func (channel *Channel) GetKeys() []string {
 	return keys
 }
 
-func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
+func (channel *Channel) GetNextEnabledKey(model string) (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
 		return channel.Key, 0, nil
 	}
 
-	// Obtain all keys (split by \n)
 	keys := channel.GetKeys()
 	if len(keys) == 0 {
-		// No keys available, return error, should disable the channel
 		return "", 0, types.NewError(errors.New("no keys available"), types.ErrorCodeChannelNoAvailableKey)
 	}
 
@@ -214,7 +213,6 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	defer lock.Unlock()
 
 	statusList := channel.ChannelInfo.MultiKeyStatusList
-	// helper to get key status, default to enabled when missing
 	getStatus := func(idx int) int {
 		if statusList == nil {
 			return common.ChannelStatusEnabled
@@ -224,29 +222,33 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		}
 		return common.ChannelStatusEnabled
 	}
-
-	// Collect indexes of enabled keys
-	enabledIdx := make([]int, 0, len(keys))
+	statusEnabledIdx := make([]int, 0, len(keys))
+	healthyIdx := make([]int, 0, len(keys))
 	for i := range keys {
-		if getStatus(i) == common.ChannelStatusEnabled {
-			enabledIdx = append(enabledIdx, i)
+		if getStatus(i) != common.ChannelStatusEnabled {
+			continue
+		}
+		statusEnabledIdx = append(statusEnabledIdx, i)
+		if IsRouteHealthy(RouteKey{ChannelId: channel.Id, KeyIndex: i, Model: model}, time.Now()) {
+			healthyIdx = append(healthyIdx, i)
 		}
 	}
-	// If no specific status list or none enabled, return an explicit error so caller can
-	// properly handle a channel with no available keys (e.g. mark channel disabled).
-	// Returning the first key here caused requests to keep using an already-disabled key.
-	if len(enabledIdx) == 0 {
+	if len(statusEnabledIdx) == 0 {
 		return "", 0, types.NewError(errors.New("no enabled keys"), types.ErrorCodeChannelNoAvailableKey)
+	}
+	// If every usable key is isolated, keep the channel probeable. Channel
+	// selection has already discounted the route; forcing a local retry failure
+	// here would make a soft-isolated pool appear empty.
+	enabledIdx := healthyIdx
+	if len(enabledIdx) == 0 {
+		enabledIdx = statusEnabledIdx
 	}
 
 	switch channel.ChannelInfo.MultiKeyMode {
 	case constant.MultiKeyModeRandom:
-		// Randomly pick one enabled key
-		selectedIdx := enabledIdx[rand.Intn(len(enabledIdx))]
+		selectedIdx := enabledIdx[rand.IntN(len(enabledIdx))]
 		return keys[selectedIdx], selectedIdx, nil
 	case constant.MultiKeyModePolling:
-		// Use channel-specific lock to ensure thread-safe polling
-
 		channelInfo, err := CacheGetChannelInfo(channel.Id)
 		if err != nil {
 			return "", 0, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
@@ -257,27 +259,23 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 			}
 			if !common.MemoryCacheEnabled {
 				_ = channel.SaveChannelInfo()
-			} else {
-				// CacheUpdateChannel(channel)
 			}
 		}()
-		// Start from the saved polling index and look for the next enabled key
 		start := channelInfo.MultiKeyPollingIndex
 		if start < 0 || start >= len(keys) {
 			start = 0
 		}
 		for i := 0; i < len(keys); i++ {
 			idx := (start + i) % len(keys)
-			if getStatus(idx) == common.ChannelStatusEnabled {
-				// update polling index for next call (point to the next position)
-				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
-				return keys[idx], idx, nil
+			for _, enabled := range enabledIdx {
+				if idx == enabled {
+					channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
+					return keys[idx], idx, nil
+				}
 			}
 		}
-		// Fallback – should not happen, but return first enabled key
 		return keys[enabledIdx[0]], enabledIdx[0], nil
 	default:
-		// Unknown mode, default to first enabled key (or original key string)
 		return keys[enabledIdx[0]], enabledIdx[0], nil
 	}
 }
@@ -485,6 +483,9 @@ func batchDeleteWithTx(tx *gorm.DB, ids []int) (int64, error) {
 		if err := deleteAbilitiesByChannelIDsWithTx(tx, chunk); err != nil {
 			return 0, err
 		}
+		if err := deleteRouteHealthByChannelIDsWithTx(tx, chunk); err != nil {
+			return 0, err
+		}
 	}
 	return deletedCount, nil
 }
@@ -596,6 +597,9 @@ func (channel *Channel) updateWithTx(tx *gorm.DB) error {
 	if err := tx.Model(channel).Updates(channel).Error; err != nil {
 		return err
 	}
+	if err := deleteRouteHealthOutsideKeyRangeWithTx(tx, channel.Id, channel.ChannelInfo.MultiKeySize); err != nil {
+		return err
+	}
 	if err := tx.First(channel, "id = ?", channel.Id).Error; err != nil {
 		return err
 	}
@@ -633,7 +637,10 @@ func (channel *Channel) deleteWithTx(tx *gorm.DB) error {
 	if err := tx.Delete(channel).Error; err != nil {
 		return err
 	}
-	return deleteAbilitiesWithTx(tx, channel.Id)
+	if err := deleteAbilitiesWithTx(tx, channel.Id); err != nil {
+		return err
+	}
+	return deleteRouteHealthByChannelIDsWithTx(tx, []int{channel.Id})
 }
 
 func (channel *Channel) Delete() error {
@@ -950,6 +957,9 @@ func deleteChannelByStatusWithTx(tx *gorm.DB, status int64) (int64, error) {
 	if err := deleteAbilitiesByChannelIDsWithTx(tx, ids); err != nil {
 		return 0, err
 	}
+	if err := deleteRouteHealthByChannelIDsWithTx(tx, ids); err != nil {
+		return 0, err
+	}
 	result := tx.Where("status = ?", status).Delete(&Channel{})
 	return result.RowsAffected, result.Error
 }
@@ -996,6 +1006,9 @@ func deleteDisabledChannelWithTx(tx *gorm.DB) (int64, error) {
 		return 0, err
 	}
 	if err := deleteAbilitiesByChannelIDsWithTx(tx, ids); err != nil {
+		return 0, err
+	}
+	if err := deleteRouteHealthByChannelIDsWithTx(tx, ids); err != nil {
 		return 0, err
 	}
 	result := tx.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
